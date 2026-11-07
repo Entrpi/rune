@@ -414,10 +414,19 @@ fn table_font_and_padding_set_the_cells_and_the_first_column_sits_flush() {
     assert_eq!(text("Count").rect[0] - cells[1].rect[0], 10.0);
     assert_eq!(by_key(&rt, "th").rect[3], 20.0 + 2.0 * 4.0, "the table font's line and the cell padding");
     assert_eq!(by_key(&rt, "r0").rect[3], 28.0);
-    // Columns hold their text on one line: the first is its text plus the right padding only.
-    let name = rune::text::measure("Name", &[], rune::TextStyle { size: 15.0 * 0.93, line_height: 20.0, weight: 670.0, features: "'tnum' 1", ..Kit::neutral(true).ty.body }, None).0;
-    let alpha = rune::text::measure("alpha", &[], rune::TextStyle { size: 15.0 * 0.93, line_height: 20.0, features: "'tnum' 1", ..Kit::neutral(true).ty.body }, None).0;
-    assert_eq!(cells[0].rect[2], name.max(alpha) + 10.0);
+    // Columns hold their text on one line: the first is its text plus the right padding only,
+    // the text's width unrounded, as a browser's table layout sums it (not rounded up to a
+    // whole point), and a hundredth of a point over, so its last word never wraps. A presented
+    // rect has both edges on the 1/64 device pixel grid, so the column ends where that edge
+    // snaps; it starts at the window's edge, where layout and grid agree.
+    let name = rune::text::content_widths("Name", &[], rune::TextStyle { size: 15.0 * 0.93, line_height: 20.0, weight: 670.0, features: "'tnum' 1", ..Kit::neutral(true).ty.body }).1;
+    let alpha = rune::text::content_widths("alpha", &[], rune::TextStyle { size: 15.0 * 0.93, line_height: 20.0, features: "'tnum' 1", ..Kit::neutral(true).ty.body }).1;
+    assert_eq!(cells[0].rect[0], 0.0);
+    let natural = name.max(alpha) + 0.01 + 10.0;
+    assert_eq!(cells[0].rect[2], rune_motion::snap::grid(natural, 2.0), "a {} column for {name} and {alpha}", cells[0].rect[2]);
+    let column = cells[0].rect[2] - 10.0;
+    assert_eq!(text("Name").rect[2], column, "the text fills its column less its right padding");
+    assert_eq!([text("Name").rect[3], text("alpha").rect[3]], [20.0, 20.0], "on one line");
 }
 
 #[test]
