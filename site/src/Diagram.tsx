@@ -1,7 +1,8 @@
 import type { CSSProperties, ReactNode } from "react"
 
-/** The architecture in one figure: the app side and the render thread, the command channel between them, and the
- *  platform shell under both. Plain HTML so the text stays crisp and the layout can stack on a phone. */
+/** The target architecture in one figure: the app side and the render thread, the command channel between them, and
+ *  the platform shell under both, with the parts that aren't built labelled Target. Plain HTML so the text stays crisp
+ *  and the layout can stack on a phone. */
 export function ArchitectureDiagram() {
   return (
     <figure className="arch" aria-labelledby="arch-caption">
@@ -10,7 +11,7 @@ export function ArchitectureDiagram() {
           <p className="arch-kicker">Main thread</p>
           <h3>App side</h3>
           <ul>
-            <li>Models: typed state, keyed by stable ids</li>
+            <li>State: one plain value, outside any view</li>
             <li>View functions → keyed tree → diff</li>
             <li>Taffy layout at the target state</li>
             <li>Parley shaping and line cache</li>
@@ -20,7 +21,7 @@ export function ArchitectureDiagram() {
         </section>
 
         <div className="arch-channel" data-area="channel">
-          <p className="arch-channel-label">Command channel</p>
+          <p className="arch-channel-label">Target · Command channel</p>
           <div className="arch-flow" data-dir="fwd">
             <span className="arch-arrow" aria-hidden="true" />
             <span className="arch-flow-text">tree diffs, target rects, text runs, spring targets</span>
@@ -32,7 +33,7 @@ export function ArchitectureDiagram() {
         </div>
 
         <section className="arch-box" data-area="render">
-          <p className="arch-kicker">Paced by the display</p>
+          <p className="arch-kicker">Target · paced by the display</p>
           <h3>Render thread</h3>
           <ul>
             <li>Presented tree: what's on screen now</li>
@@ -41,7 +42,7 @@ export function ArchitectureDiagram() {
             <li>Scroll physics, drags applied 1:1</li>
           </ul>
           <div className="arch-inner">
-            <p className="arch-inner-title">Renderer · wgpu</p>
+            <p className="arch-inner-title">Renderer · Rune's own Metal on the Mac, wgpu elsewhere</p>
             <ul>
               <li>One instanced pass: rects, shadows, glyphs, vectors</li>
               <li>Soft-edge clip on every instance</li>
@@ -58,13 +59,15 @@ export function ArchitectureDiagram() {
           <div data-optional>
             <p className="arch-kicker">Apple, optional</p>
             <h3>Native layers</h3>
-            <p className="arch-line">System glass and video behind Rune's layer, masked by the render thread each frame</p>
+            <p className="arch-line">System glass behind Rune's layer, moved in each frame's transaction</p>
           </div>
         </section>
       </div>
       <figcaption id="arch-caption">
-        The app side states targets and the render thread animates toward them. Everything that crosses between them
-        goes through the command channel.
+        Target: the app side states targets and a render thread animates toward them, and everything that crosses
+        between them goes through the command channel. Today one thread runs both sides, the renderer included.
+        Sampling springs runs no app code, but scrolling can call <code>on_scroll_offset</code>, mount virtual rows and
+        re-run the view for a moved layout read.
       </figcaption>
     </figure>
   )
@@ -83,7 +86,7 @@ const onChange: Step[] = [
 ]
 const everyFrameAfter: Step[] = [
   { name: "Springs", does: "Every track is sampled at the frame's time; scroll and reveals step too.", at: "rune-motion" },
-  { name: "Draw", does: "Rects, shadows and glyphs become instances in one wgpu pipeline.", at: "render.rs" },
+  { name: "Draw", does: "Rects, shadows and glyphs become instances in one uber-quad pipeline, drawn by Rune's own Metal backend on the Mac and wgpu elsewhere.", at: "render.rs" },
 ]
 
 function Steps({ steps, from }: { steps: Step[]; from: number }) {
@@ -104,7 +107,7 @@ export function FrameDiagram() {
       <ol className="dg-flow">
         <Steps steps={everyFrameBefore} from={1} />
         <li className="dg-group">
-          <p className="dg-group-label">Only when state changed</p>
+          <p className="dg-group-label">Only on a change</p>
           <ol className="dg-flow">
             <Steps steps={onChange} from={3} />
           </ol>
@@ -112,8 +115,9 @@ export function FrameDiagram() {
         <Steps steps={everyFrameAfter} from={6} />
       </ol>
       <figcaption id="frame-caption">
-        Steps 3–5 run only after a handler or <code>poll()</code> changes state. A frame that is only animating runs
-        1, 2, 6 and 7, and a settled window doesn't draw at all.
+        Steps 3–5 run after a handler or <code>poll()</code> changes state, and when a scroll moves a layout read or the
+        mounted virtual rows. A frame that only samples springs runs 1, 2, 6 and 7, and a settled window doesn't draw at
+        all.
       </figcaption>
     </figure>
   )
@@ -132,7 +136,7 @@ export function ThreadDiagram() {
               <li>Input and handlers</li>
               <li>View, Taffy and Parley, on a change</li>
               <li>Springs: the Runtime's Scene, sampled each frame</li>
-              <li>wgpu encode and present</li>
+              <li>Encode and present: Rune's own Metal on the Mac, wgpu elsewhere</li>
             </ul>
           </div>
           <div className="dg-feeds">
@@ -147,7 +151,7 @@ export function ThreadDiagram() {
           </div>
         </section>
         <section className="dg-panel" data-planned>
-          <p className="dg-kicker">Planned</p>
+          <p className="dg-kicker">Target</p>
           <div className="dg-box">
             <h3>App side, main thread</h3>
             <ul>
@@ -169,9 +173,10 @@ export function ThreadDiagram() {
         </section>
       </div>
       <figcaption id="threads-caption">
-        Today one thread runs every step. Animation still skips app code, because the view only re-runs when state
-        changes. The plan moves springs and drawing to a render thread, so a slow handler can't stall an animation
-        that's already moving.
+        Today one thread runs every step. Sampling springs runs no app code, though scrolling can call{" "}
+        <code>on_scroll_offset</code>, mount virtual rows and re-run the view for a moved layout read, and a slow
+        handler holds an animation that's already moving. The target moves springs and drawing to
+        a render thread, so a slow handler couldn't stall one.
       </figcaption>
     </figure>
   )
@@ -193,7 +198,7 @@ const crateRows: { label: string; crates: Crate[] }[] = [
   },
   {
     label: "Framework",
-    crates: [{ name: "rune", does: "El tree, runtime, layout, text, wgpu renderer, window, headless tooling" }],
+    crates: [{ name: "rune", does: "El tree, runtime, layout, text, GPU renderer (wgpu, or Rune's own Metal on the Mac), window, headless tooling" }],
   },
   {
     label: "Foundations",
@@ -321,13 +326,13 @@ export function PipelineDiagram() {
         { name: <code>view()</code>, does: <>Returns a keyed <code>El</code> tree: what should be on screen</> },
         { name: "Layout", does: "Taffy places every node at its target; Parley shapes the text" },
         { name: "Springs", does: "Each moved rect, colour or opacity animates from where it is now" },
-        { name: "GPU", does: "Rects, shadows and glyphs as instances, usually one wgpu draw call" },
+        { name: "GPU", does: "Rects, shadows and glyphs as instances, usually in one render pass" },
       ]}
       back="A tap runs a handler, the state changes, and the view runs again"
       caption={
         <>
-          Your code runs in the first two boxes. Rune does the rest, and while something animates it repeats only the
-          last two, so your view isn't called again until the state changes.
+          Your code runs in the first two boxes. Rune does the rest, and while a spring animates it repeats only the
+          last two, so your view isn't called again for it.
         </>
       }
     />

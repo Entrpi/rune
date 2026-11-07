@@ -58,9 +58,12 @@ export const principles: Entry[] = [
     title: "Animation never runs through app code",
     body: (
       <p>
-        Views state targets and the render thread animates toward them. While a value animates, the app side does no
-        work: no view re-run, no layout, no diff. A slow handler can delay the next change but can't stall one that's
-        already moving.
+        Views state targets, and Rune animates toward them. Once per frame, on the caller's thread (the main thread in
+        a window), Rune runs commit and layout when state changed, then motion sampling, paint and present. Sampling
+        springs runs no app code: no view re-run, no layout, no diff. Scrolling can: it calls{" "}
+        <code>on_scroll_offset</code>, mounts virtual rows, and re-runs the view when a layout read moved. Today a slow
+        handler on the main thread holds a running animation too; the target is a render thread, so a slow handler
+        could delay the next change but not stall one that's already moving.
       </p>
     ),
     spec: [{ label: "Target", values: ["app work per animated frame: 0"], mono: true }],
@@ -100,8 +103,9 @@ export const principles: Entry[] = [
       <>
         <p>
           Agents write most of Rune and most Rune apps, so they need to see and test their own work without a person.
-          Every component has named scenes, every scene renders headless and deterministically, and an inspector
-          answers queries about nodes, rects, springs and timings.
+          Every component has named scenes, and every scene renders headless and deterministically. The target is an
+          inspector that answers queries about nodes, rects, springs and timings; until it's built,{" "}
+          <code>--tree</code>, <code>--trace</code>, scripted input and <code>--hot-control</code> stand in.
         </p>
         <p>
           The code is optimised for performance, correctness and speed of change rather than for a human reading it.
@@ -131,9 +135,12 @@ export const principles: Entry[] = [
     title: "A fast path and a reference path",
     body: (
       <p>
-        Layout, text, the renderer and springs each have a slow, obviously correct reference implementation and a fast
-        one. Every change tests the fast path against the reference on generated inputs, so the fast path can be
-        specialised, duplicated or unsafe where a measurement justifies it.
+        The target is a slow, obviously correct reference implementation beside the fast one for layout, text, the
+        renderer and springs, with the fast path tested against it on generated inputs, so it can be specialised,
+        duplicated or unsafe where a measurement justifies it. Today the renderer has one:{" "}
+        <code>crates/rune-ref</code> and its GPU differential test on generated scenes, run by{" "}
+        <code>scripts/check-reference.sh --gpu</code>, with no CI job. rune-motion's tests check the springs' closed
+        form against ODE integration.
       </p>
     ),
     spec: [{ label: "Reference", values: ["CPU renderer, no GPU tricks"] }],
@@ -147,9 +154,11 @@ export const principles: Entry[] = [
     title: "Everything is observable",
     body: (
       <p>
-        Every frame, node, layout rect, spring and timing can be queried, traced and replayed. A pixel traces back to
-        the node and the <code>file:line</code> that drew it, and a recorded session replays to the same pixels. The
-        agent's view of the app is the accessibility tree, so every agent test exercises accessibility too.
+        Every frame, node, layout rect, spring and timing can be queried and traced (<code>--tree</code>,{" "}
+        <code>--trace</code>). The target is that a pixel traces back to the node and the <code>file:line</code> that
+        drew it, and that a recorded session replays to the same pixels; today <code>Rewind</code> records the last
+        minute of presented rects and opacity, not inputs. The agent's view of the app is the accessibility tree, so
+        every agent test exercises accessibility too.
       </p>
     ),
     code: [
@@ -163,19 +172,21 @@ export const principles: Entry[] = [
     body: (
       <>
         <p>
-          Tokens and literal edits apply live with no rebuild. Structural Rust edits hot-patch on the Mac in
-          about a second today, keeping app state, and the goal is 300&nbsp;ms.
+          Structural Rust edits hot-patch on the Mac with the opt-in <code>hot</code> feature, keeping app state:
+          about 8&nbsp;s median from save to GPU for Settings today, and the goal is 300&nbsp;ms. Token and literal
+          edits that apply live with no rebuild are the target.
         </p>
         <p>
-          A phone can't load new code, so in development the render thread runs on the iPhone and the app side runs on
-          the Mac, connected by the same channel the two threads use in production.
+          A phone can't load new code. The target is a development mode that runs the render thread on the iPhone and
+          the app side on the Mac, connected by the channel the two threads would use in production. Neither is built
+          yet.
         </p>
       </>
     ),
     spec: [
       {
         label: "Targets",
-        values: ["tokens ≤ 50 ms", "literals ≤ 100 ms", "Rust ≈ 1 s, goal 300 ms"],
+        values: ["tokens ≤ 50 ms", "literals ≤ 100 ms", "Rust ≈ 8 s today, goal 300 ms"],
         mono: true,
       },
     ],
@@ -186,9 +197,10 @@ export const principles: Entry[] = [
     title: "Performance budgets are gates",
     body: (
       <p>
-        Each scene's cost is counted exactly: instructions, instances, glyphs, layout nodes and allocations. Counts are
-        bisectable, so CI can fail the change that pushed a scene over its frame budget. Once settled, an app does no
-        work at all.
+        The target is each scene's cost counted exactly (instructions, instances, glyphs, layout nodes and
+        allocations) and bisectable, so CI can fail the change that pushed a scene over its frame budget. Today{" "}
+        <code>FrameStats</code> counts commits, layout nodes, glyphs and shaped layouts, and the allocation tests run in
+        the macOS CI job; there is no budget gate yet. Once settled, an app does no work at all.
       </p>
     ),
     spec: [
@@ -202,9 +214,9 @@ export const principles: Entry[] = [
     title: "Owned, not wrapped",
     body: (
       <p>
-        Rune depends on foundational crates and never on another UI framework. It borrows the best parts of Zed's GPUI
-        (the rope, the line layout cache, the macOS and iOS text input code) under GPUI's Apache-2.0 licence instead of
-        forking it.
+        Rune depends on foundational crates and never on another UI framework. It starts fresh instead of forking Zed's
+        GPUI, and has no rope or sum tree: a field's text is a plain <code>String</code>, and input methods come through
+        winit on the desktops and a hidden textarea on the web.
       </p>
     ),
     spec: [{ label: "Uses", values: ["wgpu, Taffy, Parley, AccessKit"] }],
@@ -219,18 +231,18 @@ export const layers: Entry[] = [
     body: (
       <>
         <p>
-          A view is a plain Rust function that returns an <code>El</code> tree with explicit keys. App state lives in
-          typed models outside any view. Handlers are queued and run between frames with <code>&mut</code> access to
+          A view is a plain Rust function that returns an <code>El</code> tree with explicit keys. App state is one
+          plain value outside any view. Handlers are queued and run between frames with <code>&mut</code> access to
           the state, then the view re-runs and the new tree is diffed against the old one by key.
         </p>
         <p>
           The toggle below, from the settings example, states where the knob should be and animates nothing itself.
-          The <code>.motion(motion::SNAPPY)</code> token tells the render thread how to get there.
+          The <code>.motion(motion::SNAPPY)</code> token names the spring that gets it there.
         </p>
       </>
     ),
     spec: [
-      { label: "Uses", values: ["keyed retained tree, typed models"] },
+      { label: "Uses", values: ["keyed retained tree, one plain state value"] },
       { label: "Not", values: ["signals, GPUI entities, immediate mode"] },
     ],
     code: [at("crates/rune/src/el.rs", "El, keys, handlers"), at("crates/rune/src/runtime.rs", "queue, view, diff")],
@@ -240,8 +252,12 @@ export const layers: Entry[] = [
     title: "Layout",
     body: (
       <p>
-        Taffy computes flexbox, grid and block layout over Rune's own node arena, so there is one tree. Layout runs once,
-        at the target state; moving between layouts is the render thread's job. Long lists build only the visible rows
+        Taffy computes flexbox, grid and block layout. Today its solver runs over <code>rune_taffy::LayoutStore</code>,
+        Rune's compact layout store beside the runtime's node list; the target is Taffy over Rune's own node arena, so
+        there is one tree. In the common case layout runs once per commit, at the target state; it solves again for{" "}
+        <code>aspect_fit</code> and{" "}
+        <code>anchored_fit</code>, while estimated virtual rows leave a viewport short, and when focus, a caret or a
+        layout read moved. Moving between layouts is the spring tracks' job. Long lists build only the visible rows
         plus overscan and keep the rest as estimated heights.
       </p>
     ),
@@ -250,7 +266,7 @@ export const layers: Entry[] = [
       { label: "Not", values: ["own engine, SwiftUI-style proposals"] },
     ],
     code: [
-      at("crates/rune/src/runtime.rs", "Taffy on the node arena"),
+      at("crates/rune-taffy/src/lib.rs", "LayoutStore, beside the nodes"),
       at("crates/rune/src/el/virtual_list.rs", "visible rows only"),
     ],
   },
@@ -260,8 +276,13 @@ export const layers: Entry[] = [
     body: (
       <p>
         Parley handles shaping, bidi and line breaking, with shaped runs cached apart from wrap points so resizing never
-        re-shapes. Glyphs rasterise into a greyscale atlas with four horizontal subpixel positions, and coverage is
-        adjusted by luminance so dark text isn't thin. Text that overflows fades out rather than ending in an ellipsis.
+        re-shapes. Glyphs rasterise into a greyscale atlas: on the Mac through a port of CoreGraphics' glyph pipeline,
+        with font smoothing's dilation set by the ink's luminance so dark text isn't thin, and elsewhere from their
+        outlines with Chromium's weight (<code>FontSmoothing::WindfoilChromium</code>), on quarter-pixel pens, with
+        small CJK faces hinted onto whole pixels. Overflow
+        is cut only when an element asks: <code>El::truncate_fade</code> fades it out, and{" "}
+        <code>El::truncate</code>{" "}
+        and <code>El::max_lines</code> end it with an ellipsis.
       </p>
     ),
     spec: [
@@ -275,18 +296,19 @@ export const layers: Entry[] = [
   },
   {
     slug: "render-thread",
-    title: "Render thread and spring tracks",
+    title: "Spring tracks and the presented tree",
     body: (
       <>
         <p>
-          The render thread owns the presented tree, which is what's on screen this frame. Every animated property is a
-          track of analytic spring segments, so position and velocity are exact at any time and a retarget starts the
-          new spring from where the value really is.
+          The runtime's <code>Scene</code> owns the presented tree, which is what's on screen this frame. Today it runs
+          on the main thread with the rest of the frame; the target moves it to a render thread. Every animated
+          property is a track of analytic spring segments, so position and velocity are exact at any time and a
+          retarget starts the new spring from where the value really is.
         </p>
         <p>
           Layout animates per edge, so an edge that isn't moving gets no track. Removed nodes leave the flow, play their
           exit and unmount at opacity 0. Drags and scrolling are applied here, 1:1, and one clock with time scale and
-          stepping is shared by tests, traces and the inspector.
+          stepping is shared by tests and traces.
         </p>
       </>
     ),
@@ -307,17 +329,21 @@ export const layers: Entry[] = [
       <>
         <p>
           One instanced pipeline draws rounded rects, borders, analytic shadows, glyphs and vector strokes and fills, so
-          a typical frame is one draw call. Every instance carries a clip with soft gradient edges, which makes "no
-          hard edges" free. Blending is in linear light.
+          a typical frame is one render pass, with a draw call for each run of instances on the same image or
+          glyph-atlas page. Every instance carries a clip with soft gradient edges, which makes "no hard edges" free.
+          Rune blends in sRGB-encoded space by default, as CSS and Core Animation do;{" "}
+          <code>App::srgb_blend(false)</code> blends in linear light.
         </p>
         <p>
-          Big or scaling text and icons will draw from curves with Slug, complex vectors with Vello's sparse strips, and
-          in-app blur with a backdrop pass.
+          In the text modes drawn from outlines (the default everywhere but macOS and a Mac's browser), text whose
+          scale moves draws straight from its outlines on the GPU, and in-app blur is a backdrop pass (
+          <code>El::backdrop_blur</code>). Icons will draw from curves with Slug, and complex vectors with Vello's
+          sparse strips.
         </p>
       </>
     ),
     spec: [
-      { label: "Uses", values: ["wgpu on every platform"] },
+      { label: "Uses", values: ["wgpu; Rune's own Metal backend on the Mac"] },
       { label: "Not", values: ["Skia, compute Vello, raw Metal first"] },
     ],
     code: [
@@ -332,14 +358,16 @@ export const layers: Entry[] = [
     body: (
       <p>
         A shell owns windows and panels, menus, clipboard, drag and drop, the text input protocol, the accessibility
-        adapter and the app lifecycle. Rune runs on winit today. Once text input lands it moves to thin shells per
-        platform, implementing each one's text protocol directly (<code>NSTextInputClient</code>, TSF,{" "}
-        <code>text-input-v3</code>, <code>UITextInput</code>) and borrowing from Zed's shells.
+        adapter and the app lifecycle. Rune runs on winit today, and input methods come through winit's IME on the
+        desktops and a hidden textarea on the web. The
+        target is thin shells per platform that implement each one's text protocol directly (
+        <code>NSTextInputClient</code>, TSF, <code>text-input-v3</code>, <code>UITextInput</code>), borrowing from Zed's
+        shells.
       </p>
     ),
     spec: [
-      { label: "Uses", values: ["winit, then own shells; AccessKit"] },
-      { label: "Not", values: ["winit's IME, SDL3"] },
+      { label: "Uses", values: ["winit and its IME, then own shells; AccessKit"] },
+      { label: "Not", values: ["SDL3"] },
     ],
     code: [
       at("crates/rune/src/window.rs", "winit today"),
@@ -355,8 +383,8 @@ export const layers: Entry[] = [
     body: (
       <p>
         Liquid Glass samples what's behind the window, so only the window server can draw it. For Mac surfaces that want
-        it, the Apple shell places system glass views behind transparent regions of Rune's layer and the render thread
-        updates their masks in the same transaction as the frame. This is optional; every platform gets Rune's own
+        it, the Apple shell places system glass views behind transparent regions of Rune's layer and moves them in the
+        same Core Animation transaction as the frame. This is optional; every platform gets Rune's own
         blur and materials.
       </p>
     ),
@@ -368,9 +396,11 @@ export const layers: Entry[] = [
     body: (
       <p>
         Scenes are named states with fixture data. They render in the app, offscreen in tests and in a gallery, with
-        pinned fonts and a fixed clock. The inspector speaks versioned JSON over a socket: query nodes by role, key or
-        text, read rects, springs and source locations, and inject input with exact timestamps. Motion traces come
-        straight from the render thread.
+        pinned fonts and a fixed clock. The target is an inspector that speaks versioned JSON over a socket: query
+        nodes by role, key or text, read rects, springs and source locations, and inject input with exact timestamps.
+        Until it's built, <code>--tree</code>, <code>--trace</code>, scripted input and <code>--hot-control</code>{" "}
+        stand in. Motion traces come
+        straight from the runtime's <code>Scene</code>.
       </p>
     ),
     code: [
@@ -405,15 +435,15 @@ export const decisions: Decision[] = [
   },
   {
     area: "GPU",
-    chose: "wgpu everywhere",
+    chose: "wgpu's API everywhere; Rune's own Metal on the Mac",
     rejected: "Raw Metal first, hand-written Vulkan and D3D12",
-    why: "One backend ships Mac, Windows, Linux and the web. Raw Metal comes later, only where a measurement asks for it.",
+    why: "One API ships Mac, Windows, Linux, iOS and the web. On the Mac, measurements showed wgpu's per-frame cost, so Rune's own Metal backend is the default there, plugged in through wgpu's custom backend so apps keep wgpu's types.",
   },
   {
     area: "Renderer",
     chose: "One instanced pass, glyph atlas",
     rejected: "Skia, compute Vello",
-    why: "A typical frame is one draw call, and soft clip edges cost nothing extra.",
+    why: "A typical frame is one render pass, and soft clip edges cost nothing extra.",
   },
   {
     area: "Look",
@@ -429,9 +459,9 @@ export const decisions: Decision[] = [
   },
   {
     area: "Layout",
-    chose: "Taffy on Rune's arena",
+    chose: "Taffy, over a compact layout store",
     rejected: "An own engine, SwiftUI-style proposals",
-    why: "Agents already know flexbox, and there is one tree instead of two.",
+    why: "Agents already know flexbox. Today rune_taffy::LayoutStore keeps a second tree beside the nodes; one tree, on Rune's arena, is the target.",
   },
   {
     area: "State",
@@ -441,19 +471,19 @@ export const decisions: Decision[] = [
   },
   {
     area: "Animation",
-    chose: "Spring tracks on the render thread",
+    chose: "Spring tracks outside the view; a render thread as the target",
     rejected: "Re-rendering views each frame",
-    why: "Animations keep running when the app is busy, and retargets keep velocity.",
+    why: "Sampling a spring never re-runs a view, and retargets keep velocity. On a render thread, animations would keep running while the app is busy.",
   },
   {
     area: "Accessibility",
     chose: "AccessKit",
     rejected: "Own bridges",
-    why: "The same tree serves the inspector, so agent tests exercise it.",
+    why: "The same tree is in --tree's dump, so agent tests exercise it.",
   },
   {
     area: "Hot reload",
-    chose: "Live values, subsecond patches, split process on iPhone",
+    chose: "Subsecond patches; live values and a split process on iPhone as the target",
     rejected: "A view language interpreter, loading code on the device",
     why: "Views stay plain Rust, and iOS won't load new code on a device.",
   },
@@ -556,8 +586,8 @@ export const risks: Entry[] = [
     body: (
       <p>
         Input methods on three desktops, then iOS selection, autocorrect and dictation, are where custom-rendered
-        frameworks most visibly fail. Rune implements each platform's protocol directly and gates text rendering on a
-        pixel diff against CoreText.
+        frameworks most visibly fail. Today input methods come through winit; the plan is to implement each platform's
+        protocol directly. Text rendering is gated on a pixel diff against CoreText.
       </p>
     ),
   },

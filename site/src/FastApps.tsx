@@ -390,7 +390,7 @@ export function FastAppsView() {
         </div>
       </section>
 
-      <Pager prev={["/launch-fast", "Launch fast"]} next={["/architecture", "Architecture"]} />
+      <Pager prev={["/launch-fast", "Launch fast"]} next={["/text-input", "Text input"]} />
     </>
   )
 }

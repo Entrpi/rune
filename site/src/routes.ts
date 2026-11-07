@@ -32,6 +32,13 @@ export const routes: Route[] = [
       "How to keep a Rune app fast: a free main thread, long lists that build only what is on screen, memo keyed small, an idle window that draws nothing, cheap poll, bounded caches, and a script that audits a repo.",
   },
   {
+    path: "/text-input",
+    label: "Text input",
+    title: "Text input · Rune",
+    description:
+      "Which input methods and text services a Rune text field gets on macOS, Windows, Linux, the web and iOS, from the code: winit's IME on the desktop (IMM32 on Windows, XIM on X11, text-input-v3 on Wayland), the web's hidden textarea, overlays and editors the app draws.",
+  },
+  {
     path: "/principles",
     label: "Principles",
     title: "Principles · Rune",
@@ -41,7 +48,7 @@ export const routes: Route[] = [
     path: "/architecture",
     label: "Architecture",
     title: "Architecture · Rune",
-    description: "How Rune is built: the app side, the command channel, the render thread, the renderer and the platform shells.",
+    description: "How Rune is built: one thread running each frame today, the target split into an app side and a render thread over a command channel, the renderer and the platform shells.",
   },
   {
     path: "/roadmap",

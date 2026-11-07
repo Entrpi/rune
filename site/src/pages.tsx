@@ -59,7 +59,7 @@ function Rule({ entry, number, children }: { entry: Entry; number?: string; chil
 }
 
 /** Files in this repo, crate (or folder) first so the names line up, each linked to GitHub. */
-function CodeRefs({ refs }: { refs: CodeRef[] }) {
+export function CodeRefs({ refs }: { refs: CodeRef[] }) {
   return (
     <ul className="refs">
       {refs.map(({ path, note }) => {
@@ -186,8 +186,10 @@ const buildable: { title: string; text: ReactNode; status: Status; meta: string;
     title: "Web",
     text: (
       <>
-        The same apps in a browser over WebGPU, in one canvas on the page's main thread. Experimental: Safari keyboard
-        checks, accessibility and a WebGL fallback are still to come.
+        The same apps in a browser over WebGPU, in one canvas on the page's main thread. Experimental: a DOM mirror
+        above the canvas carries landmarks, headings, links and buttons for screen readers and Tab, but not yet the
+        full accessibility tree (<a href={`${REPO}/issues/118`}>#118</a>). Safari keyboard checks are still to come,
+        and the opt-in WebGL fallback doesn't work yet.
       </>
     ),
     status: "partly",
@@ -197,10 +199,11 @@ const buildable: { title: string; text: ReactNode; status: Status; meta: string;
     title: "iOS, then Android",
     text: (
       <>
-        An iOS shell with native text input and a view for embedding Rune in SwiftUI. Nothing runs on a phone yet.
+        A Rune view embeds in UIKit or SwiftUI through <code>embed::LayerHost</code>, which draws into the view's
+        Metal layer and has run on the iOS simulator. An iOS shell with native text input is still to come.
       </>
     ),
-    status: "planned",
+    status: "partly",
     meta: "M6",
     href: "/roadmap#m6",
   },
@@ -315,7 +318,7 @@ export function HomeView() {
         <SectionHead id="build" title="What you can build" aside="October 2026">
           <p>
             Native apps first, and anything that needs Rune's pixels without a window, since headless runs use the same
-            code. The web build is experimental, and phones are planned.
+            code. The web build is experimental, and on iOS Rune embeds in the app's own views for now.
           </p>
         </SectionHead>
         <ul className="index-list">
@@ -377,7 +380,8 @@ export function HowItWorksView() {
         <SectionHead id="frame" title="A frame">
           <p>
             Each frame runs these steps in order, in <code>Runtime::frame</code> and the window's redraw. The view
-            function only runs when state changed, so animating costs your code nothing.
+            function runs when state changed, or when a scroll moved a layout read or the mounted virtual rows, so
+            sampling springs costs your code nothing.
           </p>
         </SectionHead>
         <FrameDiagram />
@@ -440,8 +444,13 @@ export function HowItWorksView() {
       <section className="doc-section">
         <SectionHead id="threads" title="Threads">
           <p>
-            Springs belong to the runtime's <code>Scene</code>, which today lives on the main thread with everything
-            else. The <a href={withBase("/architecture")}>architecture</a> moves it to a render thread.
+            Once per frame, on the caller's thread (the main thread in a window), Rune runs commit and layout when
+            state changed, then motion sampling, paint and present. Springs belong to the runtime's <code>Scene</code>,
+            which lives there with everything else. Sampling springs runs no app code; scrolling can call{" "}
+            <code>on_scroll_offset</code>, mount virtual rows and re-run the view for a moved layout read. Only
+            presenting can leave that
+            thread: on macOS, an overlay drawing with wgpu submits and presents a plain frame on a present thread of its
+            own. A render thread is the target, on the <a href={withBase("/architecture")}>architecture</a> page.
           </p>
         </SectionHead>
         <ThreadDiagram />
@@ -927,13 +936,17 @@ export function ArchitectureView() {
     <>
       <PageHead eyebrow={<span>Architecture</span>} title="How Rune is built">
         <p>
-          The design splits a Rune app across two threads. The app side turns state into a keyed tree and lays it out
-          at its target state. The render thread owns what's on screen and animates toward those targets. Everything
-          between them goes through one command channel.
+          Today, once per frame, on the caller's thread (the main thread in a window), Rune runs commit and layout when
+          state changed, then motion sampling, paint and present, in the order shown in{" "}
+          <a href={withBase("/how-it-works#frame")}>How it works</a>. Views state targets, and sampling springs runs no
+          app code; scrolling can call <code>on_scroll_offset</code>, mount virtual rows and re-run the view for a moved
+          layout read.
         </p>
         <p>
-          This page is the target from <a href={`${REPO}/blob/dev/PLAN.md`}>PLAN.md</a>. Today both sides run on one
-          thread, in the order shown in <a href={withBase("/how-it-works#frame")}>How it works</a>.
+          The target, from <a href={`${REPO}/blob/dev/PLAN.md`}>PLAN.md</a>, splits a Rune app across two threads. The
+          app side turns state into a keyed tree and lays it out at its target state. A render thread would own what's
+          on screen and animate toward those targets, with everything between them going through one command channel.
+          The parts that aren't built are labelled Target.
         </p>
       </PageHead>
 
@@ -943,25 +956,25 @@ export function ArchitectureView() {
       </section>
 
       <section className="doc-section">
-        <SectionHead id="channel" title="The command channel" />
+        <SectionHead id="channel" title="The command channel" aside="Target" />
         <div className="prose">
           <p>
-            The channel carries tree diffs, target layout rects, shaped text runs and spring targets to the render
-            thread, and hits, gesture results, settles and presented-frame ids back. It's a real, serialisable protocol
-            rather than shared memory, and three things follow from that.
+            The channel isn't built. It would carry tree diffs, target layout rects, shaped text runs and spring
+            targets to the render thread, and hits, gesture results, settles and presented-frame ids back. The plan
+            makes it a real, serialisable protocol rather than shared memory, so that three things follow.
           </p>
           <ul>
             <li>
-              <strong>Animations survive a busy app.</strong> When a value animates, the app side does no view re-run,
-              layout or diff.
+              <strong>Animations would survive a busy app.</strong> While a spring animates, the app side already does
+              no view re-run, layout or diff, but today a slow handler on the main thread holds running animations too.
             </li>
             <li>
-              <strong>Hot reload reaches the iPhone.</strong> In development the channel runs over USB, with the render
-              thread on the phone and the app side on the Mac, where it can be hot-patched.
+              <strong>Hot reload would reach the iPhone.</strong> In development the channel would run over USB, with
+              the render thread on the phone and the app side on the Mac, where it can be hot-patched.
             </li>
             <li>
-              <strong>Agents and tests read the same stream.</strong> Recording the channel gives deterministic replay,
-              frame traces and an inspector.
+              <strong>Agents and tests would read the same stream.</strong> Recording the channel would give
+              deterministic replay, frame traces and an inspector.
             </li>
           </ul>
         </div>
@@ -1017,14 +1030,15 @@ export function ArchitectureView() {
             they're the reasons Kit's apps kept leaving it for Apple frameworks.
           </p>
           <p>
-            So Rune starts fresh and borrows GPUI's best parts under its Apache-2.0 licence: the rope and sum tree, the
-            line layout cache, the macOS and iOS text input code and the web textarea bridge.
+            So Rune starts fresh rather than forking it. It has no rope or sum tree: a text field holds a plain{" "}
+            <code>String</code>, and input methods come through winit on the desktops and a hidden textarea on the web
+            (see <a href={withBase("/text-input")}>Text input</a>).
           </p>
         </div>
       </section>
       </div>
 
-      <Pager prev={["/fast-apps", "Fast apps"]} next={["/principles", "Principles"]} />
+      <Pager prev={["/text-input", "Text input"]} next={["/principles", "Principles"]} />
     </>
   )
 }

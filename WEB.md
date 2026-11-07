@@ -88,7 +88,7 @@ pub fn start() {
 
 From your app's workspace, run `path/to/rune/scripts/web-build.sh your-package`. The script
 selects one cdylib, or one binary if there is no cdylib. `--example NAME` selects a Cargo
-example. Disable Rune's `dev`, `hot` and `native-file-dialog` features on wasm. Move native
+example. Disable Rune's `hot` and `native-file-dialog` features on wasm. Move native
 filesystem, process and thread dependencies behind target conditions in your app too.
 Use `rune::time::Instant` for deadlines passed to Rune; it is `std::time::Instant` on native.
 
@@ -200,8 +200,9 @@ so the browser decodes it and draws it at its size in points on any display.
 
 ## Fonts and browser input
 
-Web includes Inter Regular and IBM Plex Mono Regular (the `embedded-fonts` feature). There is
-no system-font discovery. `App::font_url("fonts/brand.ttf")` fetches a TrueType or OpenType
+Web includes Inter Regular, Medium and SemiBold, and IBM Plex Mono Regular (the
+`embedded-fonts` feature). There is no system-font discovery.
+`App::font_url("fonts/brand.ttf")` fetches a TrueType or OpenType
 font (not WOFF2) alongside GPU setup, before the first frame, and adds it to `AppSpec::fonts`;
 on native it reads the same path from disk. Point the page's `@font-face` at the same file so the
 browser downloads it once, and build with `default-features = false` to drop the embedded fonts.
@@ -233,6 +234,12 @@ Mobile `beforeinput` line breaks use Rune's Enter rules: submit, or Shift/Alt+En
 in a multiline field. A completed touch tap focuses the editor synchronously;
 a pan scrolls instead, with momentum and a damped edge return.
 
+The textarea follows a focused field only, so an editor the app draws (`App::on_ime`) gets keys
+but no composition. It stays at the page's top-left corner, so an input method's candidate
+window opens there, and Rune doesn't use `EditContext`. Which input methods and text services
+work on each platform, the web included, is on the docs site's "Text input" page
+(`site/src/TextInput.tsx`).
+
 Secure fields use an `<input type="password">` with autocomplete, autocorrect and spellcheck
 disabled. It receives only new keystrokes and is emptied after every input; the model's
 secret is never mirrored into the DOM. Leaving a field returns focus to the canvas so
@@ -261,9 +268,12 @@ page's `viewport-fit=cover` meta tag and the textarea's 16 px font size.
 
 ## Scope and verification
 
-This target needs WebGPU. It has no WebGL fallback (a page made with `--html` stays readable
-without it), overlays,
-extra windows, native menus, drag-out, native audio/video, networking layer or hot patching.
+This target needs WebGPU. The opt-in `webgl` feature, a WebGL2 fallback, doesn't work yet: it
+doesn't compile on wasm32 ([#115](https://github.com/anomalyco/rune/issues/115)), it never runs when
+`navigator.gpu` exists but has no adapter ([#116](https://github.com/anomalyco/rune/issues/116)), and it
+draws washed-out colours ([#117](https://github.com/anomalyco/rune/issues/117)). A page made with `--html`
+stays readable without WebGPU. The target has no overlays, extra windows, native menus,
+drag-out, native audio/video, networking layer or hot patching.
 Native configuration types remain source-compatible, but their desktop host paths are not
 used on wasm. Unsupported window requests warn in the console; Show/Open are ignored.
 The document title follows `AppSpec::title`, and hidden tabs report `is_visible() == false`.
@@ -292,5 +302,5 @@ dictation, autocorrect or Safari WebGPU test; those still need device verificati
 The shell follows PLAN's winit-first approach, retaining winit 0.30's rAF and ResizeObserver
 implementation. Unlike research/11's proposed custom shell, it adds a document-aware
 textarea beside winit rather than replacing winit. This also defers PLAN's proposed switch
-to an owned shell when text input lands. WebGL fallback and EditContext from that research
-remain later work.
+to an owned shell when text input lands. A working WebGL fallback and EditContext from that
+research remain later work.

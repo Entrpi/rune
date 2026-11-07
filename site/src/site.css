@@ -672,6 +672,8 @@
 .decisions td { color: var(--fg-2); }
 .decisions td:nth-child(2) { width: 22%; color: var(--fg); }
 .decisions td.rejected { width: 22%; color: var(--fg-3); }
+/* Support matrices (Text input): no column stands out. */
+.matrix td:nth-child(2) { width: auto; color: var(--fg-2); }
 
 /* Roadmap */
 .milestones .index-title {

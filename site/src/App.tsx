@@ -5,6 +5,7 @@ import { FastAppsView } from "./FastApps"
 import { ArchitectureView, HomeView, HowItWorksView, LaunchFastView, NotFoundView, PrinciplesView, RoadmapView, num } from "./pages"
 import { stripBase, withBase } from "./base"
 import { REPO, normalizePath } from "./routes"
+import { TextInputView } from "./TextInput"
 import signature from "./footer-signature.svg"
 import { Frame, type NavGroup, type NavItem } from "./system/Frame"
 
@@ -70,6 +71,10 @@ function navGroups(pathname: string): NavGroup[] {
           spy("scrolling", "Smooth scrolling"),
           spy("caches", "Bounded caches"),
           spy("audit", "Audit a repo"),
+        ]),
+        page("/text-input", "Text input", [
+          spy("input-methods", "Input methods"),
+          spy("services", "Text services"),
         ]),
         page("/architecture", "Architecture", [
           spy("overview", "Overview"),
@@ -152,6 +157,7 @@ export function App({ pathname: initial }: { pathname?: string }) {
     "/how-it-works": HowItWorksView,
     "/launch-fast": LaunchFastView,
     "/fast-apps": FastAppsView,
+    "/text-input": TextInputView,
     "/principles": PrinciplesView,
     "/architecture": ArchitectureView,
     "/roadmap": RoadmapView,
