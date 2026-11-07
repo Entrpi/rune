@@ -1,0 +1,1 @@
+- `--tree` and `Runtime::accessibility_json` list `scroll-right` among a horizontal or two-way scroll view's actions, after `scroll-left`. The platform tree already offered it and a reader's scroll right already ran; only the JSON left it out, so an accessibility golden that holds such a view gains the entry.

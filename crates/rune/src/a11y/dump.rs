@@ -7,12 +7,15 @@ use serde_json::{Value, json};
 
 use crate::runtime::HashMap;
 
-const ACTIONS: [(Action, &str); 15] = [
+/// The actions the dump names, in the order it lists them. `dump_tests.rs` checks it against
+/// every action the runtime adds.
+const ACTIONS: [(Action, &str); 16] = [
     (Action::Click, "click"), (Action::Focus, "focus"), (Action::ShowContextMenu, "context-menu"),
     (Action::Expand, "expand"), (Action::Collapse, "collapse"), (Action::Increment, "increment"),
     (Action::Decrement, "decrement"), (Action::SetValue, "set-value"), (Action::ReplaceSelectedText, "replace-selected-text"),
     (Action::SetTextSelection, "set-text-selection"), (Action::ScrollIntoView, "scroll-into-view"), (Action::ScrollUp, "scroll-up"),
-    (Action::ScrollDown, "scroll-down"), (Action::ScrollLeft, "scroll-left"), (Action::SetScrollOffset, "set-scroll-offset"),
+    (Action::ScrollDown, "scroll-down"), (Action::ScrollLeft, "scroll-left"), (Action::ScrollRight, "scroll-right"),
+    (Action::SetScrollOffset, "set-scroll-offset"),
 ];
 
 fn r1(v: f64) -> f64 { (v * 10.0).round() / 10.0 }
@@ -127,3 +130,7 @@ impl Tree<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "dump_tests.rs"]
+mod tests;
