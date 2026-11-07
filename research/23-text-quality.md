@@ -1,5 +1,19 @@
 # 23. Text raster quality and motion
 
+> **Note, 2026-11-11: superseded.** This note tunes and measures a calibrated rasterizer:
+> swash outlines with centered emboldening, quarter-pixel x phases and a luminance-keyed
+> coverage exponent. Rune removed it (the old `Calibrated` mode) on 2026-10-29. Glyphs now go
+> through one of the `FontSmoothing` modes (`crates/rune/src/text/coretext_match.rs`). On macOS
+> and in a Mac's browser the default, `On`, is a port of CoreGraphics' glyph pipeline
+> (`text/macos/`): its curve flattening, its hinting and its ppem-dependent pen steps, plus font
+> smoothing's dilation; `FontSmoothing::Off` leaves the dilation out. Everywhere else the default
+> is `WindfoilChromium` (`text/windfoil.rs`, `text/outline/`): each glyph's exact box coverage of
+> its design outline (a CJK face's TrueType-hinted one up to 24 ppem) through Skia's text gamma,
+> filled on the GPU. On Windows,
+> `FontSmoothing::DirectWrite` rasterizes glyphs through DirectWrite as Chromium's Skia does
+> (`text/windows/`). `cargo run -p rune --example coretext_compare` measures each mode against
+> CoreText references. The numbers below are history.
+
 S5 from PLAN.md. Headless bitmaps only; no window or display capture. Results
 below are filled from outputs, not from the hypothesis.
 

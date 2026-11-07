@@ -39,6 +39,16 @@ text plain.
 
 ## Decisions
 
+*Note, 2026-11-11: most of these have since changed in the code. Highlighting is now the
+always-built `rune_kit::syntax` module, not part of `markdown`, and colours any text, such as
+code in a composer or a diff; an app can supply its own `Highlighter`. Its lexers are no longer
+these scanners but Pierre's Highlights, 80 languages translated to Rust (`crates/rune-highlights`,
+see the last section). It has 17 token kinds (`Syntax`), coloured by a `SyntaxTheme`, which can
+also give a kind a weight (`SyntaxTheme::with_weight`), as Desktop bolds Markdown headings. Only
+the first 128 KiB of a source and its first 32,768 coloured ranges get colour. Results are cached
+per highlighter, language and code: every source the last two commits drew, plus others up to an
+estimated 4 MiB. The streaming rule and `Block`'s shape still hold.*
+
 - **Colour only.** Spans set a brush and nothing else: no weight, italic or size, so shaping
   sees the same runs and glyph positions are identical with and without colour. A unit test
   lays out the same code plain, coloured and part-coloured and compares every glyph quad.

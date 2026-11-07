@@ -116,6 +116,12 @@ most 3.4%.
 Ranked by how often and how far each one takes frames past 8.3 ms. "Covered" refers to the
 numbered items in [32](32-engine-plan.md) §4.
 
+*Note, 2026-11-11: the `file:line` citations below point into `c83aa06b`, the revision
+measured; read them there. The files have since been split into modules, so the lines no
+longer match `dev`: `runtime/measure.rs` is now `runtime/commit/measure.rs`, `flatten.rs` is
+`runtime/commit/flatten.rs`, and most of `runtime.rs` and rune-kit's `markdown.rs` moved into
+the modules under `runtime/` and `markdown/`.*
+
 1. **Team chat: a keystroke or a resize step rebuilds every message row.** A keystroke
    commit takes 14.8 ms of CPU, 83% of it in view (12.3 ms). A resize step takes 18 to 20 ms
    (view 16.8 ms), and 228 to 241 of 336 resize frames miss the budget. The view builds every

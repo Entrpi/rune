@@ -407,6 +407,10 @@ v(t) is the analytic derivative (SpringSolver.swift:168-200).
   psychopomp's bound (`motion.rs:75-132`). `ε_pos` comes from the property class and is set *below the
   snap quantum*: 1/128 device px for geometry, 1/512 for opacity, 1/64 px for blur. So the final snap
   to `T` is invisible. After `settle_at` the track returns exactly `(T, 0)` and is retired.
+  *Note, 2026-11-11: the thresholds Rune ships are `PropClass::eps` in
+  `crates/rune-motion/src/props.rs`: 1/1024 for opacity and colour, 1/128 device px for blur as
+  for geometry, 1e-5 for scale, rotation and presence, and a velocity threshold ten times the
+  position one.*
 - **Conversions** at the boundaries: psychopomp's `SpringPlan::visual` multiplies duration by 1.2,
   and Motion divides by 1.2 (Kit's motion rules and presets). Rune stores
   `(duration, bounce)` and exports ω and ζ.
