@@ -168,8 +168,9 @@ impl<S: 'static> App<S> {
     }
 
     /// How this app's windows rasterise and place glyphs (see [`crate::FontSmoothing`]):
-    /// `On` by default on macOS and in a Mac's browser, `Off` elsewhere (CoreGraphics' pipeline
-    /// without font smoothing's dilation, as `-webkit-font-smoothing: antialiased` draws).
+    /// `On` by default on macOS and in a Mac's browser, and `WindfoilChromium` elsewhere (glyphs
+    /// drawn from their outlines with no dilation, unhinted but for small CJK faces, weighed as
+    /// Chromium's grayscale text is).
     /// `Tx::set_font_smoothing` switches it while running.
     pub fn font_smoothing(mut self, mode: crate::FontSmoothing) -> Self {
         self.font_smoothing = mode;

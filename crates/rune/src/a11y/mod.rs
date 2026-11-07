@@ -1,7 +1,7 @@
 //! Accessibility on the OS side: each window and overlay gets an AccessKit platform adapter
 //! (UI Automation on Windows, NSAccessibility on macOS, AT-SPI on Linux). The adapter's
 //! handlers run wherever the OS calls them; they only queue what they heard and wake the host,
-//! whose thread then activates the runtime's tree (`runtime/a11y/tree.rs`), runs the actions
+//! whose thread then activates the runtime's tree (`a11y/tree.rs`), runs the actions
 //! and sends tree updates. Until a client asks, the runtime builds nothing.
 #![cfg_attr(not(all(feature = "accessibility", any(target_os = "windows", target_os = "macos", target_os = "linux"))), allow(dead_code))]
 

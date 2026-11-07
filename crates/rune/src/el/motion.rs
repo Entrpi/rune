@@ -183,9 +183,10 @@ impl El {
         self
     }
     /// How this element enters and exits when mounted or removed after the first frame
-    /// (default: [`Transition::opacity()`] — a 0.2 s enter and 0.15 s exit fade). Because
+    /// (default: [`Transition::opacity()`], a fade on the `tok::motion::pair::SETTLE` springs,
+    /// rune-motion's `tokens::pair::SETTLE`: 0.3 s to enter and 0.24 s to exit). Because
     /// every element has this default fade, removing an element in an animated commit
-    /// (`AppSpec::on_key`, `El::on_key`, `on_submit`, `on_press`) fades it out over 0.15 s,
+    /// (`AppSpec::on_key`, `El::on_key`, `on_submit`, `on_press`) fades it out on the 0.24 s spring,
     /// whereas commits that set [`Tx::instant`] or [`Tx::settle`] (such as typing in a
     /// focused input or clicking into a text field) unmount removed elements in the same
     /// frame. Call `tx.instant()` or `tx.settle()` in the handler when a key or button

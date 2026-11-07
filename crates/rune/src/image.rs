@@ -1,5 +1,7 @@
-//! Content-addressed raster images. Decode and linear-light mip generation run on one
-//! sleeping worker per cache, never in a view or a render frame.
+//! Content-addressed raster images. Decode and linear-light mip generation run on the cache's
+//! sleeping decoder threads (up to four, at most one per core), never in a view or a render
+//! frame. On web, which has no threads, they run in tasks on the main thread, and the browser's
+//! codecs decode fetched files other than SVG and `load`'s bytes other than PNG, SVG and ICNS.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 #[cfg(not(target_arch = "wasm32"))]
@@ -60,7 +62,7 @@ impl Image {
     pub fn is_ready(&self) -> bool { self.0.decoded.get().is_some() }
     pub fn error(&self) -> Option<&ImageError> { self.0.decoded.get()?.as_ref().err() }
     /// Wait for fixture assets before advancing a deterministic headless scene. Interactive
-    /// apps use the cache's waker instead; decode still happens on the cache worker.
+    /// apps use the cache's waker instead; decode still happens on the cache's decoder threads.
     pub fn wait(&self) -> Result<[u32; 2], &ImageError> {
         #[cfg(target_arch = "wasm32")]
         let decoded = self.0.decoded.get().expect("Image::wait cannot block on web; use is_ready and the cache waker");
@@ -140,8 +142,8 @@ struct Job { image: Image, input: Input }
 const DECODERS: usize = 4;
 
 /// Construct once during app setup. The cache deduplicates by content, not a path or pointer;
-/// dropping all handles releases decoded pixels. Dropping the cache stops its worker after
-/// queued requests complete. The waker should be the one supplied by `AppSpec::setup`.
+/// dropping all handles releases decoded pixels. Dropping the cache stops its decoder threads
+/// after queued requests complete. The waker should be the one supplied by `AppSpec::setup`.
 pub struct ImageCache {
     entries: Mutex<HashMap<ImageId, Weak<State>>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -210,7 +212,7 @@ impl ImageCache {
         if essence.eq_ignore_ascii_case("image/svg+xml") { self.svg(bytes, size_pt, scale) } else { self.load(bytes) }
     }
 
-    /// An image file, read and decoded on the worker. `.svg` and `.svgz` files (or SVG content)
+    /// An image file, read and decoded on a decoder thread. `.svg` and `.svgz` files (or SVG content)
     /// rasterize like [`ImageCache::svg`]; other formats decode like [`ImageCache::load`], ignoring
     /// the size. Handles are shared by path, size and scale, so an edited file needs a new handle
     /// once the old ones drop. On web the path is a URL relative to the page, fetched as
@@ -250,7 +252,7 @@ impl ImageCache {
     /// The Finder icon for `path`, rasterized at `size_pt * scale` pixels square (pass the
     /// window's display scale). Handles are shared by (path, size, scale) rather than by
     /// content, so repeated calls never re-rasterize while a handle is alive. Lookup and
-    /// rasterization run on the cache worker like any decode, so this is safe to call from a view.
+    /// rasterization run on a decoder thread like any decode, so this is safe to call from a view.
     /// Missing paths still get the system's generic document icon on macOS. Windows reads an
     /// executable's or icon file's first icon; Linux reads a `.desktop` entry's `Icon=` from the
     /// hicolor theme or pixmaps (PNG or SVG), or an image file itself. Paths without an icon

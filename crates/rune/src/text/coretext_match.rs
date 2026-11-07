@@ -2,17 +2,22 @@
 
 use super::ApplePipeline;
 
-/// How glyphs are rasterised and placed: CoreGraphics' glyph pipeline, with or without font
-/// smoothing's dilation. Set app-wide with `App::font_smoothing`, or at run time with
+/// How glyphs are rasterised and placed: CoreGraphics' glyph pipeline with or without font
+/// smoothing's dilation, DirectWrite, or Windfoil's coverage of each glyph's outline in the modes
+/// drawn from outlines. Set app-wide with `App::font_smoothing`, or at run time with
 /// `Tx::set_font_smoothing`, which redraws with glyphs rasterised for the new mode.
 ///
 /// The default is [`FontSmoothing::On`] on macOS and in a Mac's browser, and
-/// [`FontSmoothing::WindfoilChromium`] everywhere else (Windows, Linux, the web); every mode can be
-/// chosen on every OS. `On` and `Off` work on any OS (they are arithmetic on outlines, not calls
-/// into CoreText). Either way the pipeline
+/// [`FontSmoothing::WindfoilChromium`] everywhere else (Windows, Linux, iOS, the web); every mode
+/// can be chosen on every OS. `On` and `Off` work on any OS (they are arithmetic on outlines, not
+/// calls into CoreText). Either way the pipeline
 /// floors pens to CoreGraphics' subpixel steps (`quantisation_steps`), flattens curves and
-/// hints small sizes as CoreGraphics does, and draws coverage as is. Windows blend in
-/// sRGB-encoded space, as CoreGraphics does, unless the app sets `App::srgb_blend`.
+/// hints small sizes as CoreGraphics does. `On` draws coverage as is, and so does `Off` on macOS
+/// and iOS. Elsewhere `Off` raises coverage to an exponent keyed by the text's luminance
+/// (`TEXT_GAMMA`, the curve Skia's text gamma draws grayscale text with), so light text on dark
+/// draws heavier and dark text on light a little lighter (`coverage_exponent`).
+/// Windows blend in sRGB-encoded space, as CoreGraphics does, unless the app sets
+/// `App::srgb_blend(false)`.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FontSmoothing {
@@ -23,8 +28,9 @@ pub enum FontSmoothing {
     On,
     /// Text that matches CoreText with font smoothing off, which is what macOS browsers draw
     /// for `-webkit-font-smoothing: antialiased`: the pipeline without the dilation
-    /// ([`ApplePipeline::UNSMOOTHED`]). Lighter than `On`. Linux and the web other than a Mac's
-    /// browser drew with it before `Windfoil`.
+    /// ([`ApplePipeline::UNSMOOTHED`]), its coverage weighed by the text gamma above except on
+    /// macOS and iOS. Lighter than `On`. Linux, iOS and the web other than a Mac's browser drew
+    /// with it before `Windfoil`.
     Off,
     /// Text that matches Chromium's on Windows: DirectWrite rasterises each glyph as Skia asks it
     /// to (the rendering mode the font's `gasp` table picks, its hints, grayscale antialiasing),

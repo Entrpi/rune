@@ -30,8 +30,9 @@ fn top_left_gravity(contents_flipped: bool) -> &'static objc2::runtime::AnyObjec
 /// doesn't match the layer yet (a frame that isn't drawn in time for a resize) is clipped or
 /// leaves a strip, rather than stretched to the new size and snapped back a frame later.
 /// Also tags the contents sRGB, as AppKit's own drawing is, so the compositor colour-matches
-/// them to the display (untagged, a wide-gamut display shows them oversaturated). Either
-/// surface format holds sRGB-encoded values; wgpu's reconfigures keep the tag.
+/// them to the display (untagged, a wide-gamut display shows them oversaturated). Either surface
+/// format holds sRGB-encoded values. A later `configure` clears the tag (wgpu's Metal surface and
+/// `gpu/metal/surface.rs` set the colorspace to nil), and only surface creation calls this.
 pub(crate) fn pin_contents_top_left(surface: &wgpu::Surface) {
     use objc2::runtime::{AnyObject, Bool};
     use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};

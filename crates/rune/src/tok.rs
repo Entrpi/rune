@@ -142,8 +142,11 @@ pub mod type_ {
     pub const MONO_CAPTION: TextStyle = TextStyle::new(12.0, 500.0);
 }
 
-/// Semantic colours for one appearance. Alphas are for linear-light blending, so white overlays
-/// on dark are much lower and black overlays on light much higher than their sRGB/CSS equivalents.
+/// Semantic colours for one appearance. The alphas were tuned for linear-light blending
+/// (`App::srgb_blend(false)`), so white overlays on dark are much lower and black overlays on
+/// light much higher than their sRGB/CSS equivalents. Windows blend in sRGB by default, and
+/// nothing re-solves these alphas there, so white overlays draw fainter and black ones
+/// stronger than in linear light.
 #[derive(Clone, Copy, Debug)]
 pub struct Theme {
     pub bg: Color,

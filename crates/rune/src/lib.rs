@@ -1,7 +1,9 @@
-//! Rune, first slice: keyed element tree from plain view functions, Taffy layout, analytic
-//! spring tracks, an instanced wgpu uber-quad renderer with Parley text, pointer and keyboard
-//! input, scroll viewports, growth stacks, streaming reveals, themes as data, and headless agent
-//! tooling.
+//! rune: Rune's core crate. A view is a plain Rust function that returns a keyed element tree.
+//! This crate holds layout (Taffy, through `rune-taffy`), the runtime that diffs each view and
+//! animates what changed, the GPU renderer (wgpu, or Rune's own Metal backend, the macOS
+//! default), text (Parley), input, scrolling, windows, overlays, accessibility through AccessKit,
+//! and headless dev tooling. Components are in `rune-kit` and springs in `rune-motion`. The
+//! [crate README](https://github.com/anomalyco/rune/blob/dev/crates/rune/README.md) is the guide.
 
 #[cfg(all(target_arch = "wasm32", any(feature = "hot", feature = "native-file-dialog")))]
 compile_error!("web does not support Rune's hot or native-file-dialog features; disable them for wasm32");
