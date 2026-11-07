@@ -65,6 +65,23 @@ fn cell(rt: &Runtime<Doc>, row: &str, j: usize) -> ElementInfo {
     all.into_iter().find(|e| e.parent == Some(r) && e.key.as_deref() == Some(key.as_str())).unwrap()
 }
 
+/// A border on the bottom side only, one device pixel wide.
+const BOTTOM_PX: [f32; 4] = [0.0, 0.0, 1.0, 0.0];
+
+/// Every border drawn in `c`: the box it rings in device pixels, and its sides' widths there,
+/// `[top, right, bottom, left]`.
+fn borders(rt: &Runtime<Doc>, c: rune::Color) -> Vec<([f32; 4], [f32; 4])> {
+    let c = c.premul(1.0);
+    rt.instances.iter().filter(|i| i.params[1] == rune::render::KIND_RECT && i.params[0] > 0.0 && i.border == c).map(|i| (i.rect, i.uv)).collect()
+}
+
+/// The element keyed `key` in device pixels at 2x, its edges on whole pixels as it draws.
+fn px(rt: &Runtime<Doc>, key: &str) -> [f32; 4] {
+    let [x, y, w, h] = by_key(rt, key).rect.map(|v| v * 2.0);
+    let (x0, y0, x1, y1) = (x.round(), y.round(), (x + w).round(), (y + h).round());
+    [x0, y0, x1 - x0, y1 - y0]
+}
+
 #[test]
 fn the_body_rows_sit_on_a_raised_card_inset_in_the_frame() {
     let k = Kit::neutral(true);
@@ -85,15 +102,23 @@ fn the_body_rows_sit_on_a_raised_card_inset_in_the_frame() {
     assert_eq!(tbc.rect, tb.rect);
     let raised: Vec<_> = k.shadow_layers(&k.elevation.raised).collect();
     assert_eq!(rt.presented_pose("tb").unwrap().shadows(), &raised[..], "the card is raised");
-    // Rules between body rows only: none under the header, none after the last row.
-    assert!(!has(&rt, "s0") && !has(&rt, "s-end") && !has(&rt, "s3"));
-    for (i, key) in ["s1", "s2"].into_iter().enumerate() {
-        let rule = by_key(&rt, key);
-        assert_eq!(parent(&rt, key).path, tbc.path);
-        assert_eq!((rule.fill, rule.rect[3]), (k.c.border_muted, 0.5));
-        let above = by_key(&rt, &format!("r{i}")).rect;
-        assert_eq!(rule.rect[1], above[1] + above[3], "{key} sits under r{i}");
+    // Rules between body rows only: none under the header, none after the last row. Each is
+    // the bottom border of the row above it (`tbody tr:not(:last-child) td`), one device
+    // pixel that the row takes in layout: 0.5 points at 2x.
+    assert!(!["s0", "s1", "s2", "s3", "s-end"].into_iter().any(|key| has(&rt, key)), "no rule elements");
+    let rows = ["r0", "r1", "r2"].map(|key| by_key(&rt, key));
+    for (i, row) in rows.iter().enumerate() {
+        assert_eq!(parent(&rt, &format!("r{i}")).path, tbc.path);
+        let cells = cell(&rt, &format!("r{i}"), 0).rect;
+        let rule = if i + 1 < rows.len() { 0.5 } else { 0.0 };
+        assert_eq!(cells[1], row.rect[1]);
+        assert_eq!(row.rect[3], cells[3] + rule, "r{i}'s cells end where its rule starts");
+        if i > 0 {
+            let above = rows[i - 1].rect;
+            assert_eq!(row.rect[1], above[1] + above[3], "r{i} sits under r{}'s rule", i - 1);
+        }
     }
+    assert_eq!(borders(&rt, k.c.border_muted), [(px(&rt, "r0"), BOTTOM_PX), (px(&rt, "r1"), BOTTOM_PX)], "r0 and r1 draw their rule, r2 none");
     let last = by_key(&rt, "r2").rect;
     assert_eq!(last[1] + last[3], tb.rect[1] + tb.rect[3], "the last row ends the card");
 }
@@ -106,7 +131,8 @@ fn the_card_preset_sets_its_cells_header_and_padding() {
     assert_eq!(west.text_color, Some(k.c.text_faint), "a faint header");
     assert_eq!(north.text_color, Some(k.c.text_base));
     assert_eq!(by_key(&rt, "th").rect[3], 16.0 + 2.0 * 8.0, "the header's 16-point line padded 8");
-    assert_eq!(by_key(&rt, "r0").rect[3], 16.0 + 2.0 * 10.0, "body rows padded 10");
+    assert_eq!(by_key(&rt, "r2").rect[3], 16.0 + 2.0 * 10.0, "body rows padded 10");
+    assert_eq!(by_key(&rt, "r0").rect[3], 16.0 + 2.0 * 10.0 + 0.5, "and a device pixel of rule under each row but the last");
     assert_eq!(west.rect[0] - cell(&rt, "th", 1).rect[0], 12.0);
     assert_eq!(north.rect[0] - cell(&rt, "r0", 0).rect[0], 12.0);
     assert_eq!(text(&rt, "Lettuce ×2").rect[0], west.rect[0], "header and body columns line up");
@@ -218,9 +244,26 @@ fn a_header_alone_draws_no_card() {
 fn a_streaming_last_row_gets_a_rule_above_and_none_below() {
     let src = "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | a row still arri";
     let rt = run_with(Doc { src: src.into(), style: card, width: 600.0, streaming: true, scroll_wide: false });
-    assert!(has(&rt, "r1") && has(&rt, "s1") && !has(&rt, "s2") && !has(&rt, "s0"));
-    let (r1, tb) = (by_key(&rt, "r1").rect, by_key(&rt, "tb").rect);
+    assert!(has(&rt, "r1") && !["s0", "s1", "s2"].into_iter().any(|key| has(&rt, key)));
+    let k = Kit::neutral(true);
+    assert_eq!(borders(&rt, k.c.border_muted), [(px(&rt, "r0"), BOTTOM_PX)], "a rule above the streaming row, none under it or the header");
+    let (r0, r1, tb) = (by_key(&rt, "r0").rect, by_key(&rt, "r1").rect, by_key(&rt, "tb").rect);
+    assert_eq!(r1[1], r0[1] + r0[3]);
+    assert_eq!(r1[3], cell(&rt, "r1", 0).rect[3], "the last row takes no rule");
     assert_eq!(r1[1] + r1[3], tb[1] + tb[3]);
+}
+
+#[test]
+fn a_rule_takes_a_whole_device_pixel_of_its_row_at_any_scale() {
+    // `border-bottom: 0.5px` as Chromium lays it out: one whole device pixel, so 1 point at
+    // 1x and 0.8 points at 1.25x, and the rows end where a web page's do.
+    for (scale, rows, body) in [(1.0, [37.0, 37.0, 36.0], 110.0), (1.25, [36.8, 36.8, 36.0], 109.6), (2.0, [36.5, 36.5, 36.0], 109.0)] {
+        let doc = Doc { src: SRC.to_owned(), style: card, width: 600.0, streaming: false, scroll_wide: false };
+        let mut rt = Runtime::new(doc, view, (900.0, 800.0), Env::new(true, scale));
+        rt.frame(0.0);
+        assert_eq!(["r0", "r1", "r2"].map(|key| by_key(&rt, key).rect[3]), rows, "at {scale}x");
+        assert_eq!(by_key(&rt, "tb").rect[3], body, "at {scale}x");
+    }
 }
 
 #[test]
