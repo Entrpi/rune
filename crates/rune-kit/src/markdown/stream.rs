@@ -8,6 +8,8 @@
 //! - A link still arriving draws as a link: `[text` and `[text](https://ex` are parsed with their
 //!   `](…)` or `)` added, so its brackets never show. A `[` that turns out not to start a link
 //!   (`[x] done`, `[1]`) shows as written once the next character after its `]` says so.
+//! - An image still arriving draws as it will, a block of its own when it stands in a
+//!   paragraph, its alt text growing; its source is left out until its `)` arrives.
 //! - A run of markers at the very end, which may yet open or close a span (`and **`), is left
 //!   out until the next character says which.
 //! - A trailing `|` line that isn't a table yet is left out until it is one, or until the line
@@ -172,6 +174,12 @@ fn close_tail(run: &str, base: usize, scope: Scope) -> Option<Patch> {
                         }
                         None => {
                             stack.truncate(p + 1);
+                            // An image's source is left out until it's whole, so an app is never
+                            // asked for part of a URL.
+                            if stack[p].n == 2 {
+                                (cut, stack[p].ch) = (i + 2, b'(');
+                                break;
+                            }
                             let title = run[i + 2..].split_once(char::is_whitespace).map(|t| t.1.trim_start());
                             stack[p].ch = match title.and_then(|t| t.bytes().next()) {
                                 Some(q @ (b'"' | b'\'')) if !title.is_some_and(|t| t.len() > 1 && t.ends_with(q as char)) => q,

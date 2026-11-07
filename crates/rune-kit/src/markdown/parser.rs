@@ -118,6 +118,8 @@ pub(super) struct Builder {
     image_ranges: Vec<(usize, usize)>,
     /// Each open image's source and title, beside `image_starts`.
     image_dests: Vec<(String, String)>,
+    /// The paragraph being read starts after an image lifted out of it.
+    after_image: bool,
     tail: Tail,
 }
 
@@ -246,6 +248,7 @@ impl Builder {
     }
 
     fn flush_inline(&mut self) {
+        self.after_image = false;
         if let Some((kind, mut inl, open, mut map)) = self.inline.take() {
             for o in open {
                 end_run(&mut inl, o);
@@ -266,6 +269,7 @@ impl Builder {
             }
             self.image_ranges.clear();
             self.image_starts.clear();
+            self.image_dests.clear();
             if let InlineKind::Cell = kind {
                 // Empty cells still hold their column.
                 if let Some((Container::Table(_, cells, _, _, cell_maps), _, _)) = self.stack.last_mut() {
@@ -313,14 +317,17 @@ impl Builder {
 
     /// Lifts the image whose alt text is `start..end` of the paragraph being read out into a
     /// [`Block::Image`] of its own, the text before it ending a paragraph and the text after it
-    /// starting one. An image in a heading, a table cell, a link or emphasis stays in the line.
+    /// starting one. An image in a heading, a table cell, a link or emphasis stays in the line,
+    /// and one in another image's alt text is part of that text.
+    /// One still arriving, with no source yet, is already the block it will be, so its alt text
+    /// never shows in the line and then leaves it.
     fn lift_image(&mut self, start: usize, end: usize, src: String, title: String) -> bool {
         let Some((InlineKind::Para, inl, open, map)) = self.inline.as_mut() else { return false };
-        // An image still arriving (no source yet) stays its alt text until it is whole.
-        if !open.is_empty() || end > inl.text.len() || src.is_empty() {
+        if !open.is_empty() || end > inl.text.len() {
             return false;
         }
         let alt = inl.text[start..end].to_owned();
+        let alt_map = map.slice_out(start..end);
         inl.text.truncate(start);
         inl.spans.retain_mut(|s| {
             s.1 = s.1.min(start);
@@ -332,8 +339,9 @@ impl Builder {
         });
         map.truncate_out(start);
         self.flush_inline();
-        self.push(Block::Image { src, alt, title }, BlockMap::None);
+        self.push(Block::Image { src, alt, title }, BlockMap::Inline(alt_map));
         self.inline = Some((InlineKind::Para, Inline::default(), Vec::new(), SpanMap::default()));
+        self.after_image = true;
         true
     }
 
@@ -430,6 +438,7 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
         image_starts: Vec::new(),
         image_ranges: Vec::new(),
         image_dests: Vec::new(),
+        after_image: false,
         tail: Tail::None,
     };
     let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
@@ -572,7 +581,8 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                     if let Some(start) = b.image_starts.pop() {
                         let end = b.inline().1.text.len();
                         let (src, title) = b.image_dests.pop().unwrap_or_default();
-                        if !b.lift_image(start, end, src, title) {
+                        // Only the outermost image lifts: one inside it is part of its alt text.
+                        if !b.image_starts.is_empty() || !b.lift_image(start, end, src, title) {
                             b.image_ranges.push((start, end));
                         }
                     }
@@ -585,10 +595,16 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                     code.push_str(&t);
                     map.push(range, start..code.len());
                 } else {
+                    // An open image's alt text keeps its spaces; only the paragraph after it
+                    // drops them.
+                    let after_image = b.after_image && b.image_starts.is_empty();
                     let inl = b.inline();
+                    // The paragraph after an image starts at its first word, as a line drops
+                    // the spaces it starts with.
+                    let lead = if after_image && inl.1.text.is_empty() { t.len() - t.trim_start_matches([' ', '\t']).len() } else { 0 };
                     let start = inl.1.text.len();
-                    inl.1.text.push_str(&t);
-                    inl.3.push(range, start..inl.1.text.len());
+                    inl.1.text.push_str(&t[lead..]);
+                    inl.3.push((range.start + lead).min(range.end)..range.end, start..inl.1.text.len());
                 }
             }
             Event::Code(t) => {

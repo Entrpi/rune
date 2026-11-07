@@ -17,7 +17,9 @@ fn shown(blocks: &[Block]) -> String {
                     }
                 }
                 Block::Code(c) | Block::Diff(c) | Block::Mermaid(c) => out.push(c.clone()),
-                Block::Rule | Block::Image { .. } => {}
+                // The alt text an image shows until its picture does.
+                Block::Image { alt, .. } => out.push(alt.clone()),
+                Block::Rule => {}
             }
         }
     }
@@ -86,10 +88,36 @@ fn a_link_still_arriving_draws_as_a_link() {
         assert_eq!(styled(&blocks, Style::Link), [if src.ends_with("do") { "the do" } else { "the docs" }], "{src:?}");
     }
     assert_eq!(styled(&stream("[**bold"), Style::Strong), ["bold"], "an open span inside its text");
-    assert_eq!(shown(&stream("see ![a ch")), "see a ch", "an image shows its alt text");
+    assert_eq!(shown(&stream("see ![a ch")), "see\na ch", "an image shows its alt text, in the block it will be");
+    // Its source waits for its `)`, so the app is never asked for part of a URL.
+    for (src, want) in [("see ![a chart](https://ex", ""), ("see ![a chart](https://ex.com/a.png \"Ti", ""), ("see ![a chart](https://ex.com/a.png)", "https://ex.com/a.png")] {
+        let blocks = stream(src);
+        let [Block::Para(p), Block::Image { src: got, alt, .. }] = blocks.as_slice() else { panic!("{src:?}: {blocks:?}") };
+        assert_eq!((p.text.as_str(), alt.as_str(), got.as_str()), ("see", "a chart", want), "{src:?}");
+    }
     // A `[` that isn't a link's shows as written once that's known, and a word's own never hides.
     assert_eq!(shown(&stream("cite [1] here")), "cite [1] here");
     assert_eq!(shown(&stream("xs[0")), "xs[0");
+}
+
+/// An image inside an image's alt text streams as part of that text: the outer image is the one
+/// block from the start, and its source waits for the outer `)`.
+#[test]
+fn an_image_in_an_images_alt_text_streams_as_part_of_it() {
+    let doc = "see ![outer ![inner](in.png) tail](outer.png)";
+    for src in prefixes(doc) {
+        let blocks = stream(src);
+        match blocks.as_slice() {
+            [Block::Para(p)] => assert!("see".starts_with(p.text.as_str()), "{src:?}: {blocks:?}"),
+            [Block::Para(p), Block::Image { src: got, alt, .. }] => {
+                assert_eq!(p.text, "see", "{src:?}");
+                assert!(!alt.is_empty() && "outer inner tail".starts_with(alt.as_str()), "{src:?} shows alt {alt:?}");
+                assert_eq!(got, if src == doc { "outer.png" } else { "" }, "{src:?}");
+            }
+            _ => panic!("{src:?}: {blocks:?}"),
+        }
+    }
+    assert!(matches!(stream(doc).as_slice(), [_, Block::Image { alt, .. }] if alt == "outer inner tail"));
 }
 
 #[test]

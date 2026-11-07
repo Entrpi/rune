@@ -41,7 +41,8 @@ impl Markdown {
     /// The picture for an image's source as written (`![alt](src)`): a decoded or decoding
     /// [`Image`] from the app's cache, or `None` when it has none. Until it decodes, and without
     /// one, the image shows Chromium's broken-image glyph and its alt text, as a web page does
-    /// for an `<img>` with no picture. Without this, every image does.
+    /// for an `<img>` with no picture. Without this, every image does. `f` is only asked for a
+    /// whole source: never for an empty one, nor for part of one still streaming in.
     pub fn images(mut self, f: impl Fn(&str) -> Option<Image> + 'static) -> Self {
         self.images = Some(Rc::new(f));
         self
@@ -57,9 +58,12 @@ impl Markdown {
 }
 
 impl Renderer {
-    pub(super) fn image(&self, src: &str, alt: &str, title: &str) -> El {
-        let shown = self.images.as_ref().and_then(|f| f(src)).filter(|i| i.is_ready() && i.error().is_none()).and_then(|i| Some((i.size()?, i)));
-        let Some(([w, _], picture)) = shown else { return self.broken(alt) };
+    /// `map` places the alt text in the source, for [`Markdown::highlights`]. An image with no
+    /// source yet (one still streaming in, or `![alt]()`) shows its alt text without asking the
+    /// app, so the app is only ever asked for a whole source.
+    pub(super) fn image(&self, src: &str, alt: &str, title: &str, map: Option<&SpanMap>) -> El {
+        let shown = self.images.as_ref().filter(|_| !src.is_empty()).and_then(|f| f(src)).filter(|i| i.is_ready() && i.error().is_none()).and_then(|i| Some((i.size()?, i)));
+        let Some(([w, _], picture)) = shown else { return self.broken(alt, map) };
         // Its own size in points, as a browser draws an image's pixels at 1x, up to the text's width.
         let mut e = el().role("image").label(if alt.is_empty() { "Image preview" } else { alt }).w_full().max_w(w as f32).pixels(picture.pixels()).radius(4.0).cursor(Cursor::Image(ZOOM_IN));
         if !title.is_empty() {
@@ -72,13 +76,14 @@ impl Renderer {
     }
 
     /// An image without its picture: the broken-image glyph and the alt text after it, one
-    /// line tall; nothing for an image with no alt text, as a browser leaves it out.
-    fn broken(&self, alt: &str) -> El {
+    /// line tall; nothing for an image with no alt text, as a browser leaves it out. The alt
+    /// text marks its highlights, as [`find`] matches it.
+    fn broken(&self, alt: &str, map: Option<&SpanMap>) -> El {
         if alt.is_empty() {
             return el().w_full().h(0.0);
         }
         let glyph = BROKEN_PIXELS.with(|p| el().size(16.0, 16.0).pixels(p).a11y_hidden());
         let ink = self.flow.get().ink.unwrap_or(self.s.text);
-        row().role("image").label(alt).w_full().cursor(Cursor::Image(ZOOM_IN)).child(glyph).child(self.with_reveal(text(alt.to_owned()).font(self.s.body).color(ink)).shrink())
+        row().role("image").label(alt).w_full().cursor(Cursor::Image(ZOOM_IN)).child(glyph).child(self.with_reveal(text(alt.to_owned()).font(self.s.body).color(ink).text_highlights(self.text_highlights_for(alt, map))).shrink())
     }
 }

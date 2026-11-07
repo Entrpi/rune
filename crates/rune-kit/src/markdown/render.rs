@@ -221,7 +221,7 @@ impl Renderer {
         th
     }
 
-    fn text_highlights_for(&self, text: &str, map: Option<&SpanMap>) -> Vec<TextHighlight> {
+    pub(super) fn text_highlights_for(&self, text: &str, map: Option<&SpanMap>) -> Vec<TextHighlight> {
         let Some(map) = map.filter(|_| !self.highlights.is_empty()) else { return Vec::new() };
         let mut out = Vec::new();
         for (idx, (src_ranges, hl)) in self.highlights.iter().enumerate() {
@@ -559,7 +559,7 @@ impl Renderer {
                     .child(inner.grow(1.0).shrink().pl(q.pad))
             }
             // A clear rule is spacing only (`hr { border: none; height: 0 }`).
-            Block::Image { src, alt, title } => self.image(src, alt, title),
+            Block::Image { src, alt, title } => self.image(src, alt, title, inl_map),
             Block::Rule if s.rule.a <= 0.0 => el().w_full().h(0.0),
             Block::Rule => el().w_full().h(0.5).fill(s.rule),
         }

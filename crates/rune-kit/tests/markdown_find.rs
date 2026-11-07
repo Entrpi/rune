@@ -84,8 +84,30 @@ fn link_and_image_urls_are_not_matched_while_visible_text_autolinks_and_alt_text
         ]]
     );
 
-    let img = find(src, "Look at diagram alt text and .", Case::Sensitive);
-    assert_eq!(slice_all(src, &img), vec![vec!["Look at ", "diagram alt text", " and ", "."]]);
+    // An image standing in a paragraph is a block of its own: its alt text matches in it and
+    // the words either side in theirs, and no match runs across it.
+    for across in ["Look at diagram", "alt text and", "and ."] {
+        assert!(find(src, across, Case::Sensitive).is_empty(), "{across:?} runs across an image");
+    }
+    let line = src.find("Look at").unwrap()..src.find("[secret-ref]:").unwrap();
+    let img: Vec<_> = ["Look at", "diagram alt text", "and", "."]
+        .into_iter()
+        .flat_map(|q| find(src, q, Case::Sensitive))
+        .filter(|m| line.contains(&m[0].start))
+        .collect();
+    assert_eq!(slice_all(src, &img), vec![vec!["Look at"], vec!["diagram alt text"], vec!["and"], vec!["."]]);
+    let styled = "See ![a **bold** &amp; alt](x.png) here.";
+    assert_eq!(slice_all(styled, &find(styled, "a bold & alt", Case::Sensitive)), vec![vec!["a ", "bold", " &amp; alt"]]);
+
+    // The alt text an image shows marks a match, as a paragraph's text does.
+    fn alt_view(_: &(), _: &mut Cx<()>) -> El {
+        const LINE: &str = "Look at ![diagram alt text](https://example.org/hidden-image.png).";
+        col().w(420.0).child(Markdown::new(LINE).highlights(find(LINE, "alt text", Case::Sensitive)).build(&Kit::neutral(true)))
+    }
+    let mut rt = Runtime::new((), alt_view, (420.0, 200.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let marks: Vec<_> = rt.elements().into_iter().filter(|e| e.role == "mark").map(|e| e.label.unwrap_or_default()).collect();
+    assert_eq!(marks, ["alt text"]);
 }
 
 #[test]

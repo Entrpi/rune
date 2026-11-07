@@ -1,7 +1,7 @@
 #![cfg(feature = "markdown")]
 
 use rune::{Color, Cx, El, Env, Runtime, ScrollSpec, col};
-use rune_kit::markdown::{Block, Highlight, Style, parse};
+use rune_kit::markdown::{Block, Case, Highlight, Style, find, parse};
 use rune_kit::{Kit, Markdown, MarkdownStyle};
 
 fn by_key<S>(rt: &Runtime<S>, key: &str) -> rune::runtime::ElementInfo {
@@ -668,9 +668,53 @@ fn review_marks_do_not_wrap_large_offsets_or_intercept_links() {
 fn review_autolinks_skip_images_emails_and_unsafe_schemes() {
     let src = "HTTP://example.org/a, ![https://image.example/alt](image.png) [https://label.example](https://dest.example) <https://angle.example> `https://code.example` foo@bar.com javascript:alert(1) data:text/plain,test";
     let blocks = parse(src);
-    let Block::Para(p) = &blocks[0] else { panic!("{blocks:?}") };
-    assert_eq!(p.links.iter().map(|(_, _, u)| u.as_str()).collect::<Vec<_>>(),
+    // The image stands as a block of its own between the text before it and after it.
+    let [Block::Para(before), Block::Image { src: image, alt, .. }, Block::Para(after)] = blocks.as_slice() else { panic!("{blocks:?}") };
+    assert_eq!((image.as_str(), alt.as_str()), ("image.png", "https://image.example/alt"));
+    assert_eq!(before.text, "HTTP://example.org/a,");
+    assert!(after.text.starts_with("https://label.example "), "{:?} starts at its first word", after.text);
+    assert_eq!(before.links.iter().chain(&after.links).map(|(_, _, u)| u.as_str()).collect::<Vec<_>>(),
         ["HTTP://example.org/a", "https://dest.example", "https://angle.example"]);
+    // In emphasis an image stays its alt text in the line, and that text still links nothing.
+    let blocks = parse("*![https://image.example/alt](image.png)* and https://bare.example");
+    let [Block::Para(p)] = blocks.as_slice() else { panic!("{blocks:?}") };
+    assert_eq!(p.text, "https://image.example/alt and https://bare.example");
+    assert_eq!(p.links.iter().map(|(_, _, u)| u.as_str()).collect::<Vec<_>>(), ["https://bare.example"]);
+}
+
+/// An image inside an image's alt text is part of that alt text, as CommonMark has it: the outer
+/// image is the one block, and none of its alt text is left in the paragraphs either side.
+#[test]
+fn an_image_in_an_images_alt_text_is_part_of_that_text() {
+    for (src, want, alt_text, pieces) in [
+        ("see ![outer ![inner]() tail](outer.png) and more", "outer.png", "outer inner tail", &["outer ", "inner", " tail"][..]),
+        ("see ![foo ![bar](/url)](/url2) and more", "/url2", "foo bar", &["foo ", "bar"][..]),
+    ] {
+        let blocks = parse(src);
+        let [Block::Para(before), Block::Image { src: image, alt, .. }, Block::Para(after)] = blocks.as_slice() else { panic!("{src:?}: {blocks:?}") };
+        assert_eq!((before.text.as_str(), image.as_str(), alt.as_str(), after.text.as_str()), ("see", want, alt_text, "and more"), "{src:?}");
+        // Find matches the whole alt text, once, in the image's own source, and nothing across it.
+        let image_src = src.find("![").unwrap()..src.find(" and more").unwrap();
+        let m = find(src, alt_text, Case::Sensitive);
+        assert_eq!(m.iter().map(|m| m.iter().map(|r| &src[r.clone()]).collect::<Vec<_>>()).collect::<Vec<_>>(), [pieces], "{src:?}");
+        assert!(m[0].iter().all(|r| image_src.contains(&r.start) && r.end <= image_src.end), "{src:?}: {m:?}");
+        let (first, last) = (alt_text.split(' ').next().unwrap(), alt_text.rsplit(' ').next().unwrap());
+        for across in [format!("see {first}"), format!("{last} and")] {
+            assert!(find(src, &across, Case::Sensitive).is_empty(), "{src:?}: {across:?} runs across the image");
+        }
+    }
+}
+
+/// An image's alt text keeps the spaces it starts with, whatever comes before the image: only the
+/// paragraph after an image drops its leading spaces.
+#[test]
+fn an_alt_text_keeps_its_leading_space_after_another_image() {
+    let alone = parse("![ second](two.png)");
+    let [Block::Image { src, alt, .. }] = alone.as_slice() else { panic!("{alone:?}") };
+    assert_eq!((src.as_str(), alt.as_str()), ("two.png", " second"));
+    let both = parse("![first](one.png) ![ second](two.png)");
+    let [Block::Image { src: a, alt: a_alt, .. }, Block::Image { src: b, alt: b_alt, .. }] = both.as_slice() else { panic!("{both:?}") };
+    assert_eq!((a.as_str(), a_alt.as_str(), b.as_str(), b_alt.as_str()), ("one.png", "first", "two.png", " second"));
 }
 
 #[test]

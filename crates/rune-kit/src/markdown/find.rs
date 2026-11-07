@@ -30,7 +30,8 @@ impl Case {
 /// Finds non-overlapping matches of `query` in the rendered text of `src`, in document order.
 ///
 /// Each outer entry is one match over the rendered text of a single block (paragraph, heading,
-/// list item block, table cell, code block or diff block; matches never cross block boundaries).
+/// list item block, table cell, code block, diff block or an image's alt text; matches never
+/// cross block boundaries).
 /// Each inner [`Vec`] lists the Markdown source UTF-8 byte ranges covered by that match, in
 /// order and merged where adjacent, skipping inline formatting markers (`**`, `*`, `~~`, `` ` ``),
 /// link and image destinations, and container prefixes.
@@ -102,6 +103,7 @@ fn find_in_blocks(src: &str, blocks: &[Block], maps: &[BlockMap], needle: &Needl
     for (b, map) in blocks.iter().zip(maps.iter().chain(std::iter::repeat(&empty))) {
         match (b, map) {
             (Block::Para(inl) | Block::Heading(_, inl), BlockMap::Inline(m)) => find_in_text(src, &inl.text, m, needle, out),
+            (Block::Image { alt, .. }, BlockMap::Inline(m)) => find_in_text(src, alt, m, needle, out),
             (Block::Code(code) | Block::Diff(code), BlockMap::Code(m)) => find_in_text(src, code, m, needle, out),
             (Block::Mermaid(code), BlockMap::Code(m)) => {
                 #[cfg(feature = "mermaid")]
@@ -318,6 +320,21 @@ fn normalize_ranges(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
 }
 
 impl SpanMap {
+    /// The part of this map that renders into `out`, as offsets from `out.start`: an image's
+    /// alt text, lifted out of its paragraph.
+    pub(super) fn slice_out(&self, out: Range<usize>) -> SpanMap {
+        let piece = |(s, o): &(Range<usize>, Range<usize>)| {
+            let (a, b) = (o.start.max(out.start), o.end.min(out.end));
+            if a >= b {
+                return None;
+            }
+            // A piece drawn as written keeps its own bytes; any other maps whole.
+            let s = if s.len() == o.len() { s.start + (a - o.start)..s.start + (b - o.start) } else { s.clone() };
+            Some((s, a - out.start..b - out.start))
+        };
+        SpanMap(self.0.iter().filter_map(piece).collect())
+    }
+
     pub(super) fn map_ranges(&self, queries: &[Range<usize>], out_text: &str) -> Vec<Range<usize>> {
         if queries.is_empty() || self.0.is_empty() || out_text.is_empty() {
             return Vec::new();
