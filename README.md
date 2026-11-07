@@ -42,9 +42,9 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
 
 ## Use it with your agent
 
-Give your coding agent this repo. Have it start from [`examples/hello`](examples/hello) and [`crates/rune/README.md`](crates/rune/README.md), then check its own work headlessly by rendering PNGs and inspecting the element tree.
+Give your coding agent this repo. Have it start from [`examples/hello`](examples/hello) and [`crates/rune/README.md`](crates/rune/README.md), pick the closest example from the [examples index](examples/README.md), then check its own work headlessly by rendering PNGs and inspecting the element tree.
 
-> Build me a <thing> with Rune (github.com/anomalyco/rune). Start from examples/hello and check your work headlessly.
+> Build me a <thing> with Rune (github.com/anomalyco/rune). Start from examples/hello and the closest example in examples/README.md, and check your work headlessly.
 
 ## Add it
 
@@ -54,7 +54,7 @@ rune = { git = "https://github.com/anomalyco/rune", rev = "<dev rev>" }
 
 Rune is pre-release. Pin a rev of `dev`; `dev` is never rewritten.
 
-[Docs](crates/rune/README.md) · [Components](crates/rune-kit/README.md) · [Examples](examples) · [Changelog](CHANGELOG.md)
+[Docs](crates/rune/README.md) · [Components](crates/rune-kit/README.md) · [Examples](examples/README.md) · [Changelog](CHANGELOG.md)
 
 ## Contributing
 

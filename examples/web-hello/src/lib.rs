@@ -1,3 +1,7 @@
+//! A scrollable message list with a composer, Send and Copy last, from one crate for the browser
+//! and the desktop. `scripts/web-build.sh web-hello` builds it for the web (see WEB.md);
+//! `cargo run -p web-hello` opens it in a window.
+
 use rune::{AppSpec, Cx, El, ScrollSpec, TextEdit, Tx, col, el, row, text, text_input};
 use rune::tok::{self, type_};
 #[cfg(target_arch = "wasm32")]

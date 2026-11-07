@@ -1,3 +1,7 @@
+//! Overlay lab: a transparent pill on the display under the pointer, where only its chips take
+//! clicks, and an area picker on every display, for testing overlay input, levels and capture
+//! exclusion. `cargo run -p overlay-lab`; README.md has the headless stills and desktop probes.
+
 use std::sync::{Arc, Mutex};
 use rune::{App, AppSpec, Color, Cx, DisplayTarget, El, Key, KeyEvent, KeyPolicy, OverlayHandle, OverlayInput, OverlayLevel, OverlayOptions, OverlayPlacement, OverlaySpec, Phase, RunOptions, Tx, WindowSpec, col, el, row, text};
 

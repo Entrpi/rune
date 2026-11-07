@@ -1,3 +1,7 @@
+//! Sixteen speaking rings at 60 Hz and four remote cursors at 120 Hz, moved by `Live` values that
+//! a background producer sets without rebuilding the view. `cargo run -p live-values`; README.md
+//! has the headless runs and `--bench`.
+
 use rune::{AppSpec, Color, Cx, El, Env, Live, Runtime, Spring, Tx, col, el, row};
 use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
 

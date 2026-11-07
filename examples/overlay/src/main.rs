@@ -1,3 +1,7 @@
+//! One control window and one transparent, click-through, always-on-top overlay per display, from
+//! `run_windows`. The overlays draw a stroke and share one `Live` remote cursor. `cargo run -p
+//! overlay`; README.md has the headless runs of each window.
+
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use rune::{AppSpec, Color, Cx, El, Icon, Live, Tx, WindowHandle, WindowOptions, WindowSpec, col, el, icon, text};
 
