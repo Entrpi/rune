@@ -1,54 +1,161 @@
 use rune::{Color, Cx, El, Env, Runtime, TextEdit, col, el, text};
-use rune::render::{KIND_LAYER, KIND_LAYER_END};
+use rune::render::{Gpu, Instance, KIND_LAYER, KIND_LAYER_END, OFFSCREEN_FORMAT, Offscreen, Renderer};
 use rune_kit::*;
 
 #[derive(Default)]
-struct Demo { case: usize, combo: ComboboxState }
+struct Demo { case: usize, enabled: bool, combo: ComboboxState }
+
+/// What fades in each case of `view`: the path each disabled control's faded element ends at,
+/// and Desktop's `opacity` for it (0.4 Contrast, 0.45 segments, else 0.5).
+const FADES: [&[(&str, f32)]; 15] = [
+    &[("case/#0/stack/control", 0.5)],
+    &[("case/#0/stack/control", 0.5)],
+    &[("case/select-trigger", 0.5)],
+    &[("case/#0/segment0", 0.45), ("case/#0/segment1", 0.45)],
+    &[("case/#0", 0.5)],
+    &[("case/#0", 0.5)],
+    &[("case/#0", 0.5)],
+    &[("case/#0", 0.5)],
+    &[("case/#0", 0.4)],
+    &[("case/#0", 0.5)],
+    &[("case/#0", 0.4)],
+    &[("case/#0/control", 0.5)],
+    &[("case/#0/control", 0.5)],
+    &[("rows/menu-item0", 0.5)],
+    &[("rows/combo-option-disabled", 0.5)],
+];
 
 fn view(s: &Demo, cx: &mut Cx<Demo>) -> El {
     let k = Kit::neutral(cx.system_dark());
+    let off = !s.enabled;
     let mut layers = Vec::new();
     let edit = TextEdit::new("Disabled value");
+    let button = |variant| Button::new("Button").icon(k.glyph.copy).variant(variant).disabled(off).build(&k);
+    let segment = if off { State::Disabled } else { State::Rest };
     let body = match s.case {
-        0 => col().children([false, true].map(|checked| RadioItem::new("Radio", checked).disabled(true).build(&k))),
-        1 => Select::new("select", &["One", "Two"]).current(Some("One")).disabled(true).build(&k, &mut layers),
-        2 => SegmentedControl::new(&["One", "Two"], Some(0)).width(None)
-            .segment_state(0, State::Disabled).segment_state(1, State::Disabled).build(&k),
-        3 => TextInput::new(&edit).leading_icon(k.glyph.copy).copy_button().disabled(true).build(&k),
-        4 => TextArea::new(&edit).disabled(true).build(&k),
-        5 => TextField::new("Field", &edit).error("Error").copyable().disabled(true).build(&k),
-        6 => col().children([ButtonVariant::Neutral, ButtonVariant::Contrast, ButtonVariant::Outline].map(|variant|
-            Button::new("Button").icon(k.glyph.copy).variant(variant).disabled(true).build(&k))),
-        7 => IconButton::new(k.glyph.copy).variant(IconButtonVariant::Contrast).disabled(true).build(&k),
-        8 => col().children([false, true].map(|on| Switch::new(on).label("Switch").disabled(true).build(&k))),
-        9 => Menu::new("menu").trigger(text("Menu")).open(true)
-            .item(MenuItem::new("Item").disabled(true).icon(k.glyph.copy).shortcut("A").badge("New").checked(true)
+        0 => RadioItem::new("Radio", false).disabled(off).build(&k),
+        1 => RadioItem::new("Radio", true).disabled(off).build(&k),
+        2 => Select::new("select", &["One", "Two"]).current(Some("One")).disabled(off).build(&k, &mut layers),
+        3 => SegmentedControl::new(&["One", "Two"], Some(0)).width(None)
+            .segment_state(0, segment).segment_state(1, segment).build(&k),
+        4 => TextInput::new(&edit).leading_icon(k.glyph.copy).copy_button().disabled(off).build(&k),
+        5 => TextArea::new(&edit).disabled(off).build(&k),
+        6 => TextField::new("Field", &edit).error("Error").copyable().disabled(off).build(&k),
+        7 => button(ButtonVariant::Neutral),
+        8 => button(ButtonVariant::Contrast),
+        9 => button(ButtonVariant::Outline),
+        10 => IconButton::new(k.glyph.copy).variant(IconButtonVariant::Contrast).disabled(off).build(&k),
+        11 => Switch::new(false).label("Switch").disabled(off).build(&k),
+        12 => Switch::new(true).label("Switch").disabled(off).build(&k),
+        13 => Menu::new("menu").trigger(text("Menu")).open(true).min_width(220.0)
+            .item(MenuItem::new("Item").disabled(off).icon(k.glyph.copy).shortcut("A").badge("New").checked(true)
                 .lead(el().size(16.0, 16.0).fill(Color::WHITE).child(el().size(8.0, 8.0).fill(Color::BLACK))))
             .build(&k, &mut layers),
-        10 => {
+        14 => {
+            // The list's active row is its first enabled option, so "Other" leads and the
+            // option under test is drawn alike either way but for the fade.
             let mut option = ComboboxOption::new("disabled", "Disabled option");
-            option.disabled = true;
-            Combobox::new("combo", &s.combo, &[option], |s: &mut Demo| &mut s.combo)
+            option.disabled = off;
+            Combobox::new("combo", &s.combo, &[ComboboxOption::new("other", "Other"), option], |s: &mut Demo| &mut s.combo)
                 .current(Some("disabled")).build(&k, &mut layers)
         }
         _ => unreachable!(),
     };
-    root(body, layers)
+    // On the page at its own size, so a menu or list opens below its trigger, in the window.
+    root(col().key("case").fill(k.c.bg_base).padding(20.0).items_start().child(body), layers)
 }
 
+const SIZE: (u32, u32) = (320, 240);
+const SCALE: f32 = 2.0;
+
+fn settled(case: usize, enabled: bool, dark: bool) -> Runtime<Demo> {
+    let mut s = Demo { case, enabled, ..Default::default() };
+    s.combo.open = true;
+    let mut rt = Runtime::new(s, view, (SIZE.0 as f32, SIZE.1 as f32), Env { system_dark: dark, scale: SCALE });
+    rt.set_srgb_blend(true);
+    rt.frame(0.0);
+    rt.settle_all();
+    rt.frame(0.0);
+    rt
+}
+
+/// The layers below full opacity in `instances`, as (device-pixel bounds, opacity).
+fn faded_layers(instances: &[Instance]) -> Vec<([f32; 4], f32)> {
+    instances.iter().filter(|i| i.params[1] == KIND_LAYER && i.fill[3] < 1.0).map(|i| (i.rect, i.fill[3])).collect()
+}
+
+/// `instances` without its faded layers and all they hold: what lies behind them.
+fn behind_faded_layers(instances: &[Instance]) -> Vec<Instance> {
+    // Whether each open layer fades.
+    let mut open: Vec<bool> = Vec::new();
+    instances.iter().filter(|i| {
+        let was_inside = open.contains(&true);
+        match i.params[1] {
+            k if k == KIND_LAYER => open.push(i.fill[3] < 1.0),
+            k if k == KIND_LAYER_END => { open.pop(); }
+            _ => {}
+        }
+        !was_inside && !open.contains(&true)
+    }).copied().collect()
+}
+
+/// `instances` drawn by `rt`'s atlas over its clear colour, as sRGB RGBA8 device pixels.
+fn draw(gpu: &Gpu, renderer: &mut Renderer, rt: &mut Runtime<Demo>, instances: &[Instance]) -> Vec<u8> {
+    let (w, h) = ((SIZE.0 as f32 * SCALE) as u32, (SIZE.1 as f32 * SCALE) as u32);
+    let target = Offscreen::with_format(&gpu.device, w, h, OFFSCREEN_FORMAT.remove_srgb_suffix());
+    renderer.prepare(&gpu.device, &gpu.queue, &mut rt.text.atlas, instances, (w, h));
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    renderer.draw(&mut encoder, &target.view, rt.clear_color());
+    target.copy(&mut encoder);
+    renderer.submit(&gpu.queue, encoder);
+    target.read(&gpu.device)
+}
+
+/// A disabled control fades as one layer at Desktop's opacity, as CSS `opacity` does: each of
+/// its pixels is the enabled control's pixel at that opacity over what lies behind it, so its
+/// label shows its fill as it is rather than faded through it, and an enabled control doesn't
+/// fade at all.
 #[test]
-fn disabled_controls_produce_no_layer_scopes() {
+fn disabled_controls_fade_as_one_layer() {
+    let gpu = Gpu::headless();
+    let w = (SIZE.0 as f32 * SCALE) as usize;
     for dark in [false, true] {
-        for case in 0..11 {
-            let mut s = Demo { case, ..Default::default() };
-            s.combo.open = true;
-            let mut rt = Runtime::new(s, view, (400.0, 600.0), Env { system_dark: dark, scale: 2.0 });
-            rt.frame(0.0); rt.settle_all(); rt.frame(0.0);
-            assert!(!rt.instances.is_empty(), "case {case} must paint");
-            assert!(rt.instances.iter().all(|i| i.params[1] != KIND_LAYER && i.params[1] != KIND_LAYER_END),
-                "case {case} dark={dark}: disabled styling introduced a scope");
-            if case == 9 { assert!(rt.elements().iter().any(|e| e.role == "menuitemcheckbox")); }
-            if case == 10 { assert!(rt.elements().iter().any(|e| e.role == "option")); }
+        let mut renderer = Renderer::new(&gpu.device, OFFSCREEN_FORMAT.remove_srgb_suffix());
+        renderer.set_srgb_blend(true);
+        for (case, fades) in FADES.iter().enumerate() {
+            let mut off = settled(case, false, dark);
+            let mut on = settled(case, true, dark);
+            assert_eq!(faded_layers(&on.instances), [], "case {case} dark={dark}: an enabled control fades");
+            let layers = faded_layers(&off.instances);
+            assert_eq!(layers.len(), fades.len(), "case {case} dark={dark}: one layer for each disabled control: {layers:?}");
+            let (all, behind, enabled) = (off.instances.clone(), behind_faded_layers(&off.instances), on.instances.clone());
+            let disabled_px = draw(&gpu, &mut renderer, &mut off, &all);
+            let behind_px = draw(&gpu, &mut renderer, &mut off, &behind);
+            let enabled_px = draw(&gpu, &mut renderer, &mut on, &enabled);
+            let elements = off.elements();
+            for &(path, alpha) in *fades {
+                let found: Vec<_> = elements.iter().filter(|e| e.path.ends_with(path)).collect();
+                assert_eq!(found.len(), 1, "case {case}: one element at {path}");
+                let r = found[0].rect.map(|v| v * SCALE);
+                if case == 13 { assert_eq!(found[0].role, "menuitemcheckbox"); }
+                if case == 14 { assert_eq!(found[0].role, "option"); }
+                assert!(layers.iter().any(|&(b, a)| (a - alpha).abs() < 1e-4 && (0..4).all(|j| (b[j] - r[j]).abs() <= 1.0)),
+                    "case {case} dark={dark}: {path} at {r:?} fades as one layer at {alpha}: {layers:?}");
+                let (mut worst, mut dimmed) = ((0.0f32, [0usize; 2]), 0.0f32);
+                for y in r[1].ceil() as usize..(r[1] + r[3]).floor() as usize {
+                    for x in r[0].ceil() as usize..(r[0] + r[2]).floor() as usize {
+                        for ch in 0..3 {
+                            let at = (y * w + x) * 4 + ch;
+                            let (got, lit, under) = (disabled_px[at] as f32, enabled_px[at] as f32, behind_px[at] as f32);
+                            let miss = (got - (alpha * lit + (1.0 - alpha) * under)).abs();
+                            if miss > worst.0 { worst = (miss, [x, y]); }
+                            dimmed = dimmed.max((got - lit).abs());
+                        }
+                    }
+                }
+                assert!(worst.0 <= 2.0, "case {case} dark={dark}: {path} at pixel {:?} is {:.1} off the enabled control at {alpha} over what lies behind it", worst.1, worst.0);
+                assert!(dimmed >= 8.0, "case {case} dark={dark}: {path} draws as when enabled");
+            }
         }
     }
 }

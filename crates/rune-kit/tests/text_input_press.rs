@@ -401,11 +401,27 @@ fn a_plain_field_draws_no_box_but_still_focuses_on_a_press_anywhere_and_types() 
     assert_eq!(ink(&rt, "invalid"), 0, "hovered + invalid plain draws no box, hover tint or outline");
     assert!(ink(&rt, "boxed") > 0);
     assert_eq!(by_path(&rt, "invalid/value/input").text_color, Some(k.c.danger.fg), "invalid plain shows as red text");
-    let dis_inp = by_path(&rt, "disabled/value/input").rect;
-    let dis_glyph = rt.instances.iter().find(|i| {
-        i.params[1] == rune::render::KIND_GLYPH && i.rect[0] >= dis_inp[0] && i.rect[0] < dis_inp[0] + dis_inp[2] && i.rect[1] >= dis_inp[1] && i.rect[1] < dis_inp[1] + dis_inp[3]
-    }).expect("disabled glyph");
-    assert!((dis_glyph.fill[3] - 0.5).abs() < 0.01, "disabled plain dims to 0.5: {:?}", dis_glyph.fill);
+    // A disabled plain field fades as one layer at 0.5, as CSS `opacity` does: its words keep the
+    // enabled ink, and the field's layer takes them to half.
+    use rune::render::{KIND_GLYPH, KIND_LAYER, KIND_LAYER_END};
+    let glyph_in = |r: [f32; 4]| rt.instances.iter().position(|i| {
+        i.params[1] == KIND_GLYPH && i.rect[0] >= r[0] && i.rect[0] < r[0] + r[2] && i.rect[1] >= r[1] && i.rect[1] < r[1] + r[3]
+    });
+    let dis_glyph = glyph_in(by_path(&rt, "disabled/value/input").rect).expect("disabled glyph");
+    let boxed_glyph = glyph_in(by_path(&rt, "boxed/value/input").rect).expect("enabled glyph");
+    let mut layers = Vec::new();
+    for i in &rt.instances[..dis_glyph] {
+        if i.params[1] == KIND_LAYER { layers.push(*i); }
+        if i.params[1] == KIND_LAYER_END { layers.pop(); }
+    }
+    let glyph = rt.instances[dis_glyph];
+    let shown = glyph.fill[3] * layers.iter().map(|l| l.fill[3]).product::<f32>();
+    assert!((shown - 0.5).abs() < 0.01, "disabled plain dims to 0.5: {:?} in layers {:?}", glyph.fill, layers.iter().map(|l| l.fill[3]).collect::<Vec<_>>());
+    assert_eq!(glyph.fill, rt.instances[boxed_glyph].fill, "a disabled plain field's words keep the enabled ink");
+    let dis = info(&rt, "disabled").rect;
+    let faded: Vec<_> = layers.iter().filter(|l| l.fill[3] < 1.0).map(|l| (l.rect, l.fill[3])).collect();
+    assert!(faded.len() == 1 && faded[0].1 == 0.5 && (0..4).all(|j| (faded[0].0[j] - dis[j]).abs() <= 1.0),
+        "a disabled plain field fades as one layer, its own at {dis:?}: {faded:?}");
 
     // In the 56 pt plain launcher header, leading icon (18 pt), input (24 pt), placeholder glyphs and clear button (28 pt) are all vertically centred.
     let b = plain.rect;
