@@ -48,19 +48,33 @@ fn registered_family_is_independent_of_slots_and_cache_entries() {
         "mono spans still select the mono slot");
 }
 
+/// The glyph rects and atlas pixels "Hello 0123 ffi" draws in `family` at `scale`, from a fresh
+/// system whose slots are distinct (Inter sans, Plex mono), so a sans fallback and a mono one
+/// draw differently.
+fn drawn(family: Family, scale: f32) -> (Vec<([f32; 4], [f32; 2])>, Vec<u8>) {
+    let mut system = TextSystem::new(&[INTER, PLEX], ("Inter", "IBM Plex Mono"));
+    let mut quads = Vec::new();
+    system.glyphs("Hello 0123 ffi", TextStyle::new(13.0, 400.0).family(family), scale, [0.0, 0.0], &mut quads);
+    (quads.iter().map(|q| (q.rect, q.uv)).collect(), std::mem::take(&mut system.atlas.data))
+}
+
 #[test]
 fn missing_named_family_falls_back_to_sans_pixels() {
-    // Use distinct slots to prove missing families choose sans, not mono.
+    // Distinct slots prove missing families choose sans, not mono. A name with a comma is a CSS
+    // list tried in order, so a list of missing names draws sans too, and a list that goes on
+    // to a registered family draws that family.
     for scale in [1.0, 2.0] {
-        let mut sans = TextSystem::new(&[INTER, PLEX], ("Inter", "IBM Plex Mono"));
-        let mut missing = TextSystem::new(&[INTER, PLEX], ("Inter", "IBM Plex Mono"));
-        let style = TextStyle::new(13.0, 400.0);
-        let mut a = Vec::new(); let mut b = Vec::new();
-        sans.glyphs("Hello 0123 ffi", style, scale, [0.0, 0.0], &mut a);
-        missing.glyphs("Hello 0123 ffi", style.family(Family::Named("Rune Missing Family, IBM Plex Mono")),
-            scale, [0.0, 0.0], &mut b);
-        assert_eq!(a.iter().map(|q| (q.rect, q.uv)).collect::<Vec<_>>(), b.iter().map(|q| (q.rect, q.uv)).collect::<Vec<_>>());
-        assert_eq!(sans.atlas.data, missing.atlas.data);
+        let sans = drawn(Family::Sans, scale);
+        for missing in ["Rune Missing Family", "Rune Missing Family, Rune Other Missing Family"] {
+            let named = drawn(Family::Named(missing), scale);
+            assert_eq!(named.0, sans.0, "{missing:?} must draw sans glyphs at {scale}×");
+            assert!(named.1 == sans.1, "{missing:?} must draw sans atlas pixels at {scale}×");
+        }
+        let plex = drawn(Family::Named("IBM Plex Mono"), scale);
+        assert_ne!(plex.0, sans.0);
+        let listed = drawn(Family::Named("Rune Missing Family, IBM Plex Mono"), scale);
+        assert_eq!(listed.0, plex.0, "a list skips its missing family for the next one at {scale}×");
+        assert!(listed.1 == plex.1, "a list skips its missing family for the next one at {scale}×");
     }
 }
 
