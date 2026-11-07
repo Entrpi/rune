@@ -36,7 +36,8 @@ fn find(rt: &Runtime<S>, path_end: &str) -> ElementInfo {
     rt.elements().into_iter().find(|e| e.path.ends_with(path_end)).unwrap_or_else(|| panic!("{path_end}"))
 }
 
-/// Centres (points) of the glyphs drawn inside the element whose path ends `path_end`.
+/// Centres (points) of the glyphs drawn inside the element whose path ends `path_end`, in
+/// reading order: line by line, left to right.
 fn glyphs(rt: &Runtime<S>, path_end: &str) -> Vec<(f32, f32)> {
     let e = find(rt, path_end);
     let mut out: Vec<(f32, f32)> = rt.instances.iter()
@@ -44,8 +45,18 @@ fn glyphs(rt: &Runtime<S>, path_end: &str) -> Vec<(f32, f32)> {
         .map(|i| ((i.rect[0] + i.rect[2] / 2.0) / 2.0, (i.rect[1] + i.rect[3] / 2.0) / 2.0))
         .filter(|&(x, y)| x >= e.rect[0] && x <= e.rect[0] + e.rect[2] && y >= e.rect[1] && y <= e.rect[1] + e.rect[3])
         .collect();
-    out.sort_by(|a, b| ((a.1 / 10.0).round(), a.0).partial_cmp(&((b.1 / 10.0).round(), b.0)).unwrap());
-    out
+    // A line's glyph centres sit a few points apart (a capital's above an `e`'s), and lines 20 or
+    // more: a glyph over half a line below the top of the line so far starts the next.
+    out.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let (mut line, mut top) = (0, f32::NEG_INFINITY);
+    let mut lined: Vec<(usize, (f32, f32))> = out.into_iter().map(|g| {
+        if g.1 - top > 10.0 {
+            (line, top) = (line + 1, g.1);
+        }
+        (line, g)
+    }).collect();
+    lined.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.total_cmp(&b.1.0)));
+    lined.into_iter().map(|(_, g)| g).collect()
 }
 
 fn tick(rt: &mut Runtime<S>) { rt.frame(1.0 / 60.0); }
