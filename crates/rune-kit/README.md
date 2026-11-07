@@ -110,7 +110,7 @@ selectable text so a selected command line looks like a selected field:
 `text(cmd).selectable(true).selection_color(k.selection())`. `rune-text--selectable-help` in the
 gallery shows both, with an icon button explained by `.help`.
 
-Button (10 variants × 3 sizes × 5 states), IconButton, Switch (compact, standard), Checkbox,
+Button (10 variants × 5 sizes × 5 states), IconButton, Switch (compact, standard), Checkbox,
 RadioGroup/RadioItem, TextInput, TextArea, TextField (older), Field, Select (inline and field
 triggers, grouped), Popover, Menu (compact and standard, checkbox/radio items, submenus,
 context menus via `.at(x, y)`), Tooltip (compact, standard, large), HoverCard, Toast and
@@ -328,10 +328,15 @@ source each time, and earlier blocks stay mounted.
   and file header lines. Set colours with `MarkdownStyle::diff` and `diff_hunk`. Line text
   keeps the body colour unless `diff_text(added, removed)` or `diff_text_tint(0.5)` (toward the
   theme's green and red) colours it.
-- **```` ```mermaid ````** (feature `mermaid`, backed by `rune-mermaid`) draws flowcharts,
-  sequence diagrams and state diagrams natively, with no JS or webview, themed through
-  `MarkdownStyle::diagram*`. Layout runs once per source and is cached. Anything outside the
-  supported subset (listed in `rune-mermaid`) shows as its plain code block. `rune_kit::mermaid::render(src, &style)` draws one on its own.
+- **```` ```mermaid ````** (feature `mermaid`, backed by `rune-mermaid`) draws 17 diagram types
+  natively, with no JS or webview, themed through `MarkdownStyle::diagram*`: flowcharts,
+  sequence, state, class and entity-relationship diagrams, gantt and pie charts, mindmaps,
+  timelines, user journeys, git graphs, quadrant and XY charts, sankey, block, requirement and C4
+  diagrams. Layout runs once per source and style, and the last 16 layouts are kept. While a
+  fence is still open, the diagram draws from its complete lines and lays out again as each line
+  arrives; with `Markdown::streaming` on, each layout holds to the last one, so nothing moves
+  back. Anything outside the supported subset (listed in `rune-mermaid`) shows as its plain code
+  block. `rune_kit::mermaid::render(src, &style)` draws one on its own.
 - **`selectable(true)`** lets people select and copy the text as one selection: a drag runs from
   a paragraph through list items into a code block, Shift-click extends, Cmd+A selects the
   whole Markdown and Cmd+C copies the text as drawn, as a web browser does: a newline between
@@ -432,17 +437,25 @@ Known differences, and why:
 - **Glyph advances.** Chromium on Linux rounds each glyph advance to a device pixel (no subpixel
   positioning); Rune keeps Parley's fractional advances and rounds text boxes up to a device pixel.
   Words differ by up to ~0.5 pt, which adds up along wrapped rows (button variants).
-- **Antialiasing.** Rune's greyscale atlas with luminance dilation vs Chromium's FreeType/Skia
-  rasteriser: stems differ by a fraction of a pixel; diff images show text outlines.
-- **Blending.** Rune blends in linear light; translucent tokens are re-solved per backdrop
-  (`Kit::on`), exact over the surface they were solved for and close elsewhere. CSS group opacity
-  (disabled controls) is per-layer opacity in Rune, so text over a dimmed fill is slightly lighter.
+- **Antialiasing.** On Linux Rune draws `FontSmoothing::WindfoilChromium` by default: each glyph's
+  box coverage of its unhinted outline (a small CJK face's TrueType-hinted one, on whole pixels),
+  through Skia's text gamma, on quarter-pixel pens. Chromium there draws a lightly autohinted
+  outline on whole-pixel pens (`FontSmoothing::Hinted` draws that way). Stems differ by a fraction
+  of a pixel; diff images show text outlines.
+- **Blending.** Windows blend in sRGB by default, as a browser does, so translucent tokens land as
+  authored. In a window that blends in linear light (`srgb_blend(false)`) they are re-solved per
+  backdrop (`Kit::on`), exact over the surface they were solved for and close elsewhere. Disabled
+  controls fade as one layer (`El::layer_opacity`), as CSS group opacity does.
 - **Focus.** Controls support keyboard focus rings, Tab, activation and arrow-key roving.
-  Dialog traps focus and restores the opener; popover/select opening autofocus is still separate.
+  Dialog traps focus and restores the opener. An open select focuses its current option and keeps
+  Tab inside its listbox; a popover leaves focus where it is until Tab moves into it. Each returns
+  focus to its trigger on close when focus was inside it.
 - **Motion.** Spinner pulses use fixed seeds in the web's randomized timing ranges; Loader rotates
   every 900 ms. Both use Rune's clock and hold a static pose under reduced motion. Indeterminate
   progress remains static. Transitions use springs rather than CSS easing curves.
-- **Not drawn.** The textarea resize grip, hover-card trigger underline, scrollbars.
+- **Not drawn.** The textarea resize grip and scroll bar, and the hover-card trigger underline.
+  Menus, selects and popup lists draw a scroll bar, `Kit::scroll_bar` adds one to any scroll
+  viewport, and `MarkdownStyle::table_scroll_bar` gives a wide Markdown table one.
 - **Story quirks mirrored on purpose.** Solid ignores `defaultValue` on the v2 inputs (the web shows
   placeholders), the Basic and NonCollapsible accordions render closed, and the menu Rich story's
   `settings`/`save`/`print` icons fall back to `plus`. `components-popover--inline` and the

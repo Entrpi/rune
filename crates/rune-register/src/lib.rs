@@ -1,7 +1,7 @@
 //! Lists a feature adds itself to from its own file, so new scenes, stories and knob groups don't
 //! all edit one central list. A list is a distributed slice of [`Part`]s: declare it once with
 //! [`slice!`], add to it from any module with [`register!`], and read it with [`collect`], which
-//! orders parts by module path so the result doesn't depend on link order.
+//! orders parts by module path, so parts from different modules don't depend on link order.
 //!
 //! ```
 //! use rune_register::{collect, register, slice};

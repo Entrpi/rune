@@ -1,4 +1,4 @@
-//! The presented tree the render thread owns: presence (exits that stay mounted), layout animation
+//! The presented tree the caller samples: presence (exits that stay mounted), layout animation
 //! by edges, screen-space travel, matched geometry, and the per-frame [`Presented`] output.
 
 use crate::carry::Carry;
@@ -303,7 +303,7 @@ impl D {
     }
 }
 
-/// The render thread's animated tree.
+/// The animated tree the caller samples once per frame.
 pub struct Scene {
     store: AnimationStore,
     nodes: Vec<Node>,

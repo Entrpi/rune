@@ -140,15 +140,20 @@ impl Spring {
     /// spring into a fade. [`SpringPair::NONE`] and [`crate::Transition::none`] build on it.
     pub const NONE: Spring = Spring::new(1e-6, 0.0);
 
-    // SwiftUI's named springs (iOS 17+). Duration 0.5 by default.
+    // SwiftUI's named springs (iOS 17+), with SwiftUI's values. Duration 0.5 by default.
+    // Rune's own defaults are the `motion` tokens; their `DEFAULT`, `SMOOTH` and `SNAPPY` are
+    // other springs.
 
-    /// SwiftUI `.smooth`: duration 0.5, bounce 0.
+    /// SwiftUI `.smooth`: duration 0.5, bounce 0. Rune's own `motion::SMOOTH` is another spring:
+    /// [`motion::GLIDE`](crate::tokens::GLIDE), duration 0.32.
     pub const SMOOTH: Spring = Spring::new(0.5, 0.0);
-    /// SwiftUI `.snappy`: duration 0.5, bounce 0.15.
+    /// SwiftUI `.snappy`: duration 0.5, bounce 0.15. Rune's own `motion::SNAPPY` is another
+    /// spring: [`motion::SNAP`](crate::tokens::SNAP), duration 0.25, bounce 0.
     pub const SNAPPY: Spring = Spring::new(0.5, 0.15);
     /// SwiftUI `.bouncy`: duration 0.5, bounce 0.3.
     pub const BOUNCY: Spring = Spring::new(0.5, 0.3);
-    /// SwiftUI `.spring` (the iOS 17 default): duration 0.5, bounce 0.
+    /// SwiftUI `.spring` (the iOS 17 default): duration 0.5, bounce 0. Rune's own default is
+    /// [`motion::DEFAULT`](crate::tokens::DEFAULT), which is `motion::SETTLE`, duration 0.3.
     pub const DEFAULT: Spring = Spring::new(0.5, 0.0);
 
     /// SwiftUI `.smooth(duration:extraBounce:)`.

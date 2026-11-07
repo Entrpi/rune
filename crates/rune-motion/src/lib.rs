@@ -1,8 +1,8 @@
 //! # rune-motion
 //!
-//! Rune's animation runtime: pure math and data structures the render thread drives once per
-//! frame. App code states targets; this crate turns them into presented values with no app work
-//! per frame (PLAN.md §3, §4.9; research 06).
+//! Rune's animation runtime: pure math and data structures the caller drives once per frame (in
+//! a Rune window, on the main thread). App code states targets; this crate turns them into
+//! presented values with no app work per frame (PLAN.md §3, §4.9; research 06).
 //!
 //! - [`Spring`]: SwiftUI's `Spring(duration:bounce:)`, closed form for every damping regime.
 //! - [`Curve`]: springs, CSS tweens ([`Easing`]), decay (fling), keyframes.

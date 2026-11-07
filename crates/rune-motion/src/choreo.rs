@@ -1,4 +1,4 @@
-//! Choreography: stagger, cue-based sequences and phase cycling, run by the render thread.
+//! Choreography: stagger, cue-based sequences and phase cycling, ticked by the caller each frame.
 //!
 //! Beats start on *events*, not on summed durations: "when that one arrives", "when it settles",
 //! "not before 0.3 s". A spring's physical tail is not its choreographic span (psychopomp

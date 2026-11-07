@@ -1,5 +1,5 @@
-//! The animation store: every animated property of every node, in flat arrays the render thread
-//! samples once per frame.
+//! The animation store: every animated property of every node, in flat arrays the caller samples
+//! once per frame.
 //!
 //! - **Struct of arrays.** Lane targets, values, velocities and segments live in parallel `Vec`s;
 //!   a track (one property of one node) is a contiguous run of lanes.

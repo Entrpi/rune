@@ -121,7 +121,7 @@ pub mod prop {
     pub const FILL: Prop<Color> = Prop::builtin(7, PropClass::Color);
     /// Soft-mask insets (left, top, right, bottom) in points.
     pub const MASK: Prop<Sides> = Prop::builtin(8, PropClass::Shape);
-    /// Scroll or drag offset owned by the render thread.
+    /// Scroll or drag offset: a [`PropClass::Gesture`] value the user's hand drives.
     pub const SCROLL: Prop<Vec2> = Prop::builtin(9, PropClass::Gesture);
     /// Presence progress: 0 absent, 1 present. Driven by the scene.
     pub const PRESENCE: Prop<f32> = Prop::builtin(10, PropClass::Presence);

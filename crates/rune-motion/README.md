@@ -3,8 +3,8 @@
 Rune's animation runtime: springs, tweens, decay, keyframes, retargeting, presence and
 transitions (blur-replace included), layout animation, matched geometry and choreography. It is
 plain math and data structures with no renderer dependency and no required dependencies (the
-optional `serde` feature covers the config types). App code states targets. The render thread
-samples them once per frame and gets back what to draw.
+optional `serde` feature covers the config types). App code states targets. The caller samples
+them once per frame (in a Rune window, on the main thread) and gets back what to draw.
 
 ```rust
 use rune_motion::prelude::*;
@@ -23,7 +23,7 @@ scene.insert(row, NodeSpec::new(Rect::new(0.0, 96.0, 320.0, 44.0))
 scene.set_frame(card, Rect::new(0.0, 0.0, 360.0, 160.0), LayoutAnim::new(motion::MORPH).width_leads());
 scene.remove(NodeId(3));                       // stays drawn until its exit settles
 
-let out = scene.frame_at(1.0 / 120.0);         // render thread, once per frame
+let out = scene.frame_at(1.0 / 120.0);         // once per frame, by the caller
 for p in out.changed { /* draw p.rect, p.opacity, p.affine(), p.blur, p.mask … */ }
 ```
 
@@ -46,7 +46,7 @@ let x = store.get(id, X);
 |---|---|
 | `Spring` | SwiftUI `Spring(duration:bounce:)`, bounce 0 by default, closed form in every damping regime. `sample`, `settling_duration`, `css_linear` (WAAPI export), plus constructors from response/damping fraction, ω/ζ, stiffness/damping/mass and Motion `visualDuration`. |
 | `Curve` / `Anim` | `Spring`, `Tween` (CSS cubic-bezier, steps, linear), `Decay` (iOS rates), `Keyframes` (Hermite cubics that keep velocity across keys), `Instant`. `Anim` adds `.delay()`, `.additive()`/`.merge()`, `.velocity()` and `.completion(token)`. |
-| `motion::*` tokens | `INSTANT SNAP SETTLE REFLOW GLIDE MORPH POP DRIFT CAMERA`, each with an `_EXIT` partner 10–25 % shorter (copied from Kit's motion presets), plus `motion::pair::*` `SpringPair`s and SwiftUI presets. |
+| `motion::*` tokens | `INSTANT SNAP SETTLE REFLOW GLIDE MORPH POP DRIFT CAMERA` (copied from Kit's motion presets). All but `CAMERA` have an `_EXIT` partner: `INSTANT_EXIT` matches `INSTANT`, and the rest are 10–30 % shorter. Plus `motion::pair::*` `SpringPair`s and SwiftUI presets. |
 | `Animatable` | `f32`, `Vec2`, `Rect` (four edges), `Color` (premultiplied OKLab), `Corners`, `Sides`, `Transform`, `Blur`, tuples and arrays. Up to `MAX_LANES` f32 lanes. |
 | `AnimationStore` | Every animated value is a track. Retargeting keeps position and velocity. Also delays, settle and completion events, gesture `release` (spring, decay, decay-into-bounds), `retune` for live token edits, and reduced motion per `PropClass`. |
 | `Scene` | Keyed nodes with presence (exits stay mounted, revive mid-exit without a jump), `Transition`s (`opacity scale offset move push slide blur_replace reveal asymmetric combined`), layout by edges (`Travel::Parent`) or one straight screen path (`Travel::Screen`), `match_geometry`, popLayout. |
@@ -127,6 +127,12 @@ and fill, then removes the source immediately.
 | `accessibilityReduceMotion` | `useReducedMotion` | `set_reduced_motion(true)` |
 | — | `stagger(gap, { from })` | `Stagger::new(gap).from(..)`, `Choreography::stagger` |
 
+`Spring::SMOOTH`, `SNAPPY`, `BOUNCY` and `DEFAULT` keep SwiftUI's values: duration 0.5, bounce
+0, 0.15, 0.3 and 0. Rune's own defaults are the `motion::*` tokens (`rune::tok::motion` in an
+app). Three of them share a name with a `Spring` constant but not its spring: `motion::DEFAULT`
+is `SETTLE` (0.3 s), `motion::SMOOTH` is `GLIDE` (0.32 s) and `motion::SNAPPY` is `SNAP`
+(0.25 s, bounce 0).
+
 ## Benchmarks
 
 `cargo run --profile perf --example bench`. Every track stays active for all 120 ticks at 120 Hz.
@@ -151,7 +157,7 @@ one critical lane at 10 ns, `exp` at 5 ns and `sin_cos` at 7.6 ns.
 
 ## Renderer integration contract
 
-Run this on the render thread once per display-link callback:
+The caller runs this once per frame (in a Rune window, on the main thread):
 
 1. `scene.set_time(target_timestamp)`. Use the timestamp the frame will be *shown* at, not the
    current time. `Clock::frame(host)` handles pause, slow motion and seek.
@@ -183,24 +189,28 @@ Call `scene.set_pixel_scale(scale)` on display changes and `scene.set_reduced_mo
 system setting changes. Setting `RUNE_MOTION_TRACE=/path.jsonl` and calling
 `scene.set_trace(MotionTrace::from_env(&header))` writes motion traces.
 
+Growth caps and flight-layer z-order are the renderer's, and live in rune's runtime rather than
+here: growth stacks ease on per-second speed limits (`rune::growth::caps`), and a flying
+element's subtree paints above the rest of the tree.
+
 ## Examples and tests
 
 - `cargo run --example curves [dir]` writes SVG plots of the tokens, SwiftUI
   presets, curve kinds, retargeting and presence/travel paths. The current plots are in
   `demo/motion/`.
 - `cargo run --profile perf --example bench` prints the numbers above.
-- `cargo test` runs 53 tests and 1 doctest. They check the spring closed form against ODE
-  integration in every regime, C¹ continuity under random retargets, that additive and merged
-  springs match, delays, decay into bounds, generational reuse, zero allocation, presence revive,
-  blur-replace, screen travel, matched geometry, reduced motion, choreography cues and trace
-  output.
+- `cargo test` checks the spring closed form against ODE integration in every regime, C¹
+  continuity under random retargets, that additive and merged springs match, delays, decay into
+  bounds, generational reuse, zero allocation, presence revive, blur-replace, screen travel,
+  matched geometry, reduced motion, choreography cues and trace output. It also covers enter
+  delays, loops and clocks, CSS easings, the gesture helpers, `math::exp` and `math::sin_cos`
+  against std, and that the tokens match Kit's motion presets.
 
 ## Not yet
 
 - `Travel::Screen` uses a separate progress per axis, so a width-leading screen path is not perfectly straight.
 - Not implemented: resize modes (mask, scale, relayout), a live token table and `tune.json`,
-  live `Bound` expressions, growth caps, flight-layer z-order, and scroll physics for platforms
-  other than iOS.
+  live `Bound` expressions, and scroll physics for platforms other than iOS.
 - `Animated<T>` has no delay and no additive blending.
 - Multi-lane values (rects, colours) cost more than the ~20 ns target per track. The cost is
   roughly per lane.

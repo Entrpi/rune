@@ -17,7 +17,7 @@ pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 [features]
 # `Markdown` and `MarkdownStyle`.
 markdown = ["dep:pulldown-cmark"]
-# Native ```mermaid diagrams in `Markdown` (flowcharts, sequence and state diagrams), and `mermaid`.
+# Native ```mermaid diagrams in `Markdown` (the 17 types `rune-mermaid` draws), and `mermaid`.
 mermaid = ["markdown", "dep:rune-mermaid"]
 # Phase timings for the headless benches (`markdown_resize`).
 frame-profile = ["rune/frame-profile"]
