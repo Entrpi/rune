@@ -30,6 +30,96 @@ Rune's core crate: views, layout, animation, rendering, text and the native shel
   Debug builds warn once per call site when a scroll viewport inside a `.grow()` container
   resolves to 0 pt while its content is taller; `.virtualize` without `.growth` panics with the
   element's path.
+- **Layout and CSS**: Rune lays out with Taffy's flexbox and grid, but a Rune element starts from
+  other defaults than a CSS one, and some builders rewrite styles. The defaults come from
+  `CompactStyle::rune_base` (`crates/rune-taffy/src/style/mod.rs`) and `text()` (`el.rs`):
+
+  | Default | Rune | CSS |
+  | --- | --- | --- |
+  | `display` | `flex`: `el()`, `row()` and `text()` are rows, `col()` a column | `block` for a `div` (initially `inline`) |
+  | `position` | `relative`: each element is the containing block of its `.absolute(..)` and `.pin(..)` children | `static` |
+  | `flex-shrink` | `0`: a row's children, wrapped text included, overflow instead of shrinking | `1` |
+  | `box-sizing` | `border-box` | `content-box` |
+  | Border | `.border(..)` draws over the box's edge and takes no room, so padding and children don't move in; `.border_layout()` gives it room | always takes room |
+  | Text | no soft wrap unless `.wrap()`; `\n` still breaks a line | wraps |
+  | Text width | rounds up to whole device pixels | fractional |
+  | Empty text | one line tall | 0 tall |
+
+  Rewrites a public builder reaches (`el/layout.rs`, `el/text.rs`, `runtime/commit/flatten.rs`,
+  `crates/rune-taffy/src/style/setters.rs`):
+
+  - `.grow(g)` sets grow `g`, shrink 1 and basis 0, so space splits by weight rather than by
+    content, within each element's minimum and maximum. CSS: `flex: g 1 0`.
+  - `.shrink()` sets shrink 1 and `min-width: 0`, so a row can narrow the element below its
+    content. `min-height` stays `auto`, so in a column it still stops at its content's height.
+    CSS: `flex-shrink: 1; min-width: 0`.
+  - `.truncate()`, `.truncate_middle()`, `.truncate_head()` and `.truncate_fade()` make one
+    unwrapped line that shrinks the same way and measures no wider than its room, so the cut has
+    a width to fit. CSS, for `.truncate()`: `white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0`. CSS has no middle or head cut; a fade takes a
+    `mask-image`.
+  - `.scroll_x()` and `.scroll_xy()` lay the content out at its natural, unwrapped width, as
+    SwiftUI's `ScrollView(.horizontal)` proposes. The viewport becomes a row (with more than one
+    child, `.scroll_xy()` keeps its direction). A child without a width, or with `w_full`, gets
+    `width: max-content`; if it is the only child or `w_full`, it also gets `min-width: 100%`
+    unless it sets a minimum. Every child gets shrink 0, and with vertical scrolling too
+    `align-self: flex-start` unless it sets one. CSS: an `overflow-x: auto` flex row whose
+    children are `flex-shrink: 0`, with `width: max-content; min-width: 100%` on one that fills
+    it.
+  - rune-kit's scroll bars (`Kit::scroll_bar`, `ScrollBar::scroll_bar`,
+    `ScrollBar::scroll_bar_styled`) split the viewport in two (`El::wrap_scroll_area`,
+    `CompactStyle::take_box_placement`). A column wrapper takes the viewport's size, minimum and
+    maximum, flex factors, position, margins, `align-self`, aspect ratio, grid placement and
+    overflow, and the bar draws over it. The viewport fills the wrapper with `flex: 1 1 auto` and
+    zero minimums. As a scroll container the wrapper's automatic minimum is 0, so its content
+    doesn't size the ancestors. CSS: a wrapper with the viewport's box and `overflow` around a
+    `flex: 1 1 auto; min-width: 0; min-height: 0` scroller.
+  - `.pixels(..)` on an element that sets one side takes the image's `aspect-ratio`, so the other
+    side follows the picture. Under a minimum or maximum, a side in points is clamped first, and
+    a percentage side measures the picture from the width it gets. CSS: an `<img>` with one side
+    set.
+  - `.aspect_fit(r)` first lays the element out as the room it may fill (grow and shrink 1, a
+    stretched cross side, its maximums as its size), then at the largest `r` box inside that
+    room, without flexing. CSS has no one property for it; `object-fit: contain` does it for an
+    image inside its box.
+  - `.anchored(..)` and `.above(..)` take the element out of flow (`position: absolute`). After
+    layout Rune places it beside its anchor, flips it to the other side when it overflows and the
+    other side fits, and keeps it 8 pt inside the window, except that a long one may run past the
+    bottom (or right) edge. When an `.anchored_fit(..)` element fits on neither side,
+    Rune caps its `max-height` (or `max-width`) at the larger side's room and lays out again.
+    CSS: anchor positioning with `position-try-fallbacks`, or Floating UI's `size` middleware.
+  - The view's root takes the window's width and height; with `App::fit_content_height` its
+    height is `auto`. CSS: `width: 100vw; height: 100vh`.
+
+  The `--html` export starts every element from its own base rule (`BASE_CSS` in
+  `runtime/web/export/page.rs`) and writes only what differs from it (`runtime/web/export/css.rs`).
+  Border-box sizing, `flex`, `relative` and zero margin, padding and border match the live base,
+  and an element writes `flex-shrink` only when it isn't CSS's 1, so Rune's default 0 is written.
+  The base rule differs from the live base in two places:
+
+  - The rule sets `min-width: 0`; live, the minimum width is `auto`. In the static first frame a
+    `.grow(..)` child of a row can shrink below its content's width; live it can't. (`.shrink()`
+    and the truncations set 0 in both.)
+  - A text element's runs are inline boxes (`.t>*`), so the browser shapes and wraps the text.
+    Live, Parley does, and the width rounds up to device pixels.
+
+  The export doesn't write grid tracks or cell placement, `max-content` or other intrinsic
+  sizes, or fades, and a middle or head cut exports as an end ellipsis. Its root takes the
+  page's width and its content's height.
+
+  Taffy features no builder reaches: `display: block` and `display: none`; grid beyond
+  `equal_columns(n)` (`repeat(n, 1fr)`) and `grid_cell(column)` in the first row; `row-reverse`,
+  `column-reverse` and `wrap-reverse`; `align-content`, `justify-items` and `justify-self`; a
+  `flex-basis` other than `.grow`'s 0; `margin: auto`, and percentage padding, margins, gaps,
+  insets and minimum and maximum sizes (`w_frac`, `w_full` and `h_full` are the only
+  percentages); `min-content`, `max-content` and `fit-content` sizes (Rune sets `max-content`
+  itself, for horizontal scroll content); `position: static`, `fixed` and `sticky`
+  (`.sticky_top(..)` is Rune's own, a shift applied while drawing); `overflow` outside scroll
+  viewports (the clip builders clip what draws, so a clipped flex item keeps its content-sized
+  minimum); `box-sizing: content-box`; `direction: rtl` (`El::dir` lays out left to right, then
+  mirrors). Not compiled in: `calc()` (rune-taffy turns Taffy's `calc` feature off, and its
+  layout view, `LayoutStoreView`, resolves any calc length to 0), floats and
+  `flex-wrap: balance`.
 - **Animation** (`rune-motion`, `runtime.rs`): analytic springs (`Spring::new(duration, bounce)`),
   tweens, decay and transitions driven through `rune_motion::Scene` and `AnimationStore`. Retargets
   keep exact position and velocity.
