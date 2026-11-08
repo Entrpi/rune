@@ -11,6 +11,8 @@ pub(super) struct Measurement<'a, S: 'static> {
     pub(super) playground: Option<&'a crate::playground::Live<S>>,
     pub(super) env: Env,
     pub(super) viewport: (f32, f32),
+    /// How much taller the window is than when the last commit laid out in it.
+    pub(super) grew: f32,
     pub(super) fit_height: bool,
     pub(super) system_reduced_motion: bool,
     pub(super) titlebar_inset: f32,

@@ -872,7 +872,7 @@ impl<S: 'static> Runtime<S> {
         }
         taffy.compact_if_sparse(|me, slot| self.nodes[me as usize].taffy = slot);
         self.layout = taffy;
-        self.reuse.built(self.env.scale, self.srgb_blend);
+        self.reuse.built(self.env.scale, self.srgb_blend, self.viewport);
         self.text.end_commit();
         self.dirty = false;
         self.relayout = false;

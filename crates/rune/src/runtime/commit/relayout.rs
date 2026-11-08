@@ -18,13 +18,16 @@ pub(super) struct Reuse {
     pub(super) read_moved: bool,
     /// The blend mode the last commit built its view in; theme colours resolve per mode.
     pub(super) srgb: Option<bool>,
+    /// The window the last commit laid out in, so a resize knows how much taller it got.
+    pub(super) viewport: (f32, f32),
 }
 
 impl Reuse {
     /// Records what the commit just applied was built with.
-    pub(super) fn built(&mut self, scale: f32, srgb: bool) {
+    pub(super) fn built(&mut self, scale: f32, srgb: bool, viewport: (f32, f32)) {
         self.scale = scale;
         self.srgb = Some(srgb);
+        self.viewport = viewport;
     }
 }
 

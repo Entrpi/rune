@@ -223,6 +223,22 @@ fn a_resize_that_moves_a_virtual_window_runs_the_view() {
     assert_eq!(shown(&rt), shown(&full));
 }
 
+/// A window that grows past the rows its list mounted picks rows for its new height on the
+/// first pass, whatever the rows measure: the view runs once, on either path.
+#[test]
+fn a_window_that_grows_past_the_mounted_rows_runs_the_view_once() {
+    for sticky in [false, true] {
+        for h in [2400.0, 3000.0] {
+            let mut rt = scrolled_transcript(sticky);
+            let mut full = scrolled_transcript(sticky);
+            rt.set_viewport((700.0, h), 2.0);
+            assert_eq!(views(|| { rt.frame(1.0 / 120.0); }), 1, "at {h}, sticky {sticky}");
+            assert_eq!(full_resize(&mut full, (700.0, h)), 1, "at {h}, sticky {sticky}");
+            assert_eq!(shown(&rt), shown(&full), "at {h}, sticky {sticky}");
+        }
+    }
+}
+
 /// A text leaving at a breakpoint fades out with its text, though the resize took the text
 /// layouts before the view ran.
 #[test]

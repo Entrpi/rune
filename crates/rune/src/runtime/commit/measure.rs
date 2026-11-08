@@ -52,6 +52,7 @@ impl<S: 'static> Runtime<S> {
             playground: self.playground.as_deref(),
             env: self.env,
             viewport: self.viewport,
+            grew: (self.viewport.1 - self.reuse.viewport.1).max(0.0),
             fit_height: self.fit_height,
             system_reduced_motion: self.system_reduced_motion,
             titlebar_inset: self.titlebar_inset,
@@ -250,9 +251,16 @@ impl<S: 'static> Measurement<'_, S> {
             let old_scroll = self.path_ids.get(scroll_path).and_then(|id| self.scrolls.get(id));
             let pinned = (tx.settle && sticky) || old_scroll.map_or(sticky, |s| s.pinned);
             let mut offset = old_scroll.map_or(0.0, |s| s.offset as f32);
-            // A new viewport has no height yet: its bound from the tree, else the window's.
+            // A new viewport has no height yet: its bound from the tree, else the window's. One
+            // laid out before keeps its height, plus what the window grew since, up to its bound:
+            // a taller window mounts rows for the room it lays them out in, instead of finding
+            // part of it blank and building the view again.
             let first = if scroll_bound.is_finite() { scroll_bound } else { self.viewport.1 };
-            let height = self.committed_node(scroll_path).map_or(first, |i| self.nodes[i].local.h);
+            let grew = if scroll_bound.is_finite() { self.grew } else { 0.0 };
+            let height = self.committed_node(scroll_path).map_or(first, |i| {
+                let h = self.nodes[i].local.h;
+                (h + grew).min(scroll_bound).max(h)
+            });
             let padding = |p: LengthPercentage| match p.expand() {
                 taffy::style::ExpandedLengthPercentage::Length(x) => x,
                 _ => panic!("virtual stack padding must be in points"),
