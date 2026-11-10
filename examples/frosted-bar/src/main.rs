@@ -4,7 +4,7 @@
 //! ```sh
 //! cargo run -p frosted-bar --release
 //! cargo run -p frosted-bar -- --snap bar.png --scale 2 --theme dark
-//! cargo run -p frosted-bar --profile perf -- --script examples/frosted-bar/scroll.json --frames 480 --fps 120 --scale 2
+//! RUNE_DEV=1 cargo run -p frosted-bar --profile perf -- --script examples/frosted-bar/scroll.json --frames 480 --fps 120 --scale 2
 //! ```
 //!
 //! The bar blurs at σ 8 pt under a light tint. `--scene strong` blurs at σ 20 pt under a

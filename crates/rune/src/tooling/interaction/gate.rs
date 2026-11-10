@@ -1,9 +1,11 @@
 //! Whether interaction timing runs, read once from the environment, and where it sends.
 //!
 //! On when `RUNE_PERF=1`, or when `OTEL_EXPORTER_OTLP_ENDPOINT` names a loopback address (a
-//! developer's local collector). `RUNE_PERF=0` turns it off over either. A headless run turns on
-//! only for `RUNE_PERF=1`, so agents' snapshots and tests don't send. Shipped builds on a user's
-//! Mac have neither variable: every check is one load of a cached byte.
+//! developer's local collector) in a process with Rune's dev surface (`dev_surface`: a debug
+//! build, `RUNE_DEV=1` or `rune::dev_tooling`), so a shipped build ignores a collector set up for
+//! another tool. `RUNE_PERF=0` turns it off over either. A headless run turns on only for
+//! `RUNE_PERF=1`, so agents' snapshots and tests don't send. Every check is one load of a cached
+//! byte.
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -36,12 +38,19 @@ pub(crate) fn headless() { decide(true); }
 
 #[cold]
 fn decide(headless: bool) -> bool {
-    let perf = std::env::var("RUNE_PERF").ok();
-    let otel = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
-    let on = !cfg!(test) && !cfg!(target_arch = "wasm32") && wanted(perf.as_deref(), otel.as_deref(), headless);
-    if on { let _ = ENDPOINT.set(endpoint(otel.as_deref())); }
+    let var = |k: &str| std::env::var(k).ok();
+    let opted_in = crate::tooling::dev_surface::opted_in();
+    let on = !cfg!(test) && !cfg!(target_arch = "wasm32") && wanted_in(&var, cfg!(debug_assertions), opted_in, headless);
+    if on { let _ = ENDPOINT.set(endpoint(var("OTEL_EXPORTER_OTLP_ENDPOINT").as_deref())); }
     STATE.store(if on { ON } else { OFF }, Ordering::Relaxed);
     on
+}
+
+/// [`wanted`] for the environment `var` reads, a build with or without debug assertions, and
+/// whether the app called `rune::dev_tooling`: the endpoint counts only with Rune's dev surface.
+pub(crate) fn wanted_in(var: &dyn Fn(&str) -> Option<String>, debug: bool, opted_in: bool, headless: bool) -> bool {
+    let otel = var("OTEL_EXPORTER_OTLP_ENDPOINT").filter(|_| crate::tooling::dev_surface::in_env(var, debug, opted_in));
+    wanted(var("RUNE_PERF").as_deref(), otel.as_deref(), headless)
 }
 
 /// Whether the settings turn timing on.

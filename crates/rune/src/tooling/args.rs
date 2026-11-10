@@ -88,11 +88,13 @@ pub(crate) fn mark_time(v: &str) -> Option<String> {
 }
 
 impl Args {
+    /// Rune's flags from the process's arguments, keeping the rest for `extra_args`. A build
+    /// without debug assertions reads them only after [`dev_tooling`](crate::dev_tooling) or with
+    /// `RUNE_DEV=1`; otherwise every argument is the app's.
     pub fn parse() -> Args {
-        #[cfg(target_arch = "wasm32")]
-        return Args::parse_from(Vec::new());
-        #[cfg(not(target_arch = "wasm32"))]
-        Args::parse_from(std::env::args().skip(1).collect())
+        let (args, extra) = Args::process();
+        let _ = EXTRA.set(extra);
+        args
     }
 
     /// Parses `argv` (without the program name); unrecognised arguments become `extra_args`.
@@ -105,10 +107,21 @@ impl Args {
     /// The process's arguments, leaving `extra_args` unset so an app's own `App::args` can still
     /// set it.
     fn parse_process() -> Args {
+        Args::process().0
+    }
+
+    fn process() -> (Args, Vec<String>) {
         #[cfg(target_arch = "wasm32")]
-        return Args::parse_split(Vec::new()).0;
+        return Args::parse_split(Vec::new());
         #[cfg(not(target_arch = "wasm32"))]
-        Args::parse_split(std::env::args().skip(1).collect()).0
+        Args::from_process(std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect(), super::dev_surface::on())
+    }
+
+    /// `argv` as the process's arguments: Rune's flags and the app's with Rune's dev surface on;
+    /// without it, all of them the app's, and nothing parsed that could exit the process.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn from_process(argv: Vec<String>, dev: bool) -> (Args, Vec<String>) {
+        if dev { Args::parse_split(argv) } else { (Args::parse_split(Vec::new()).0, argv) }
     }
 
     fn parse_split(argv: Vec<String>) -> (Args, Vec<String>) {

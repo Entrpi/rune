@@ -5,7 +5,7 @@ other platforms use the same shader with uploaded byte planes. `--snap` freezes 
 
 ```sh
 cargo build --release -p video-tiles
-target/release/video-tiles --snap tiles.png --scale 2
+RUNE_DEV=1 target/release/video-tiles --snap tiles.png --scale 2
 
 cargo build --profile perf -p video-tiles
 target/perf/video-tiles --bench-native

@@ -17,8 +17,8 @@ let pointer = rune::el().live_offset(cursor.smooth(rune::Spring::new(0.16, 0.0))
 
 ```sh
 cargo build --release -p live-values
-target/release/live-values --snap live.png --at 2
-target/release/live-values --scene smooth --trace live.jsonl --frames 840 --fps 120
+RUNE_DEV=1 target/release/live-values --snap live.png --at 2
+RUNE_DEV=1 target/release/live-values --scene smooth --trace live.jsonl --frames 840 --fps 120
 
 cargo build --profile perf -p live-values
 target/perf/live-values --bench

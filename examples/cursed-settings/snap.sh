@@ -5,6 +5,7 @@ set -e
 cargo build --release -p cursed-settings 2>&1 | grep -E '^(error|warning: unused)|-->|^\s+\|' | head -80 || true
 cargo build --release -p cursed-settings -q
 bin="${CARGO_TARGET_DIR:-target}/release/cursed-settings"
+export RUNE_DEV=1  # a release build reads Rune's flags only with it
 out=captures/cursed
 rm -rf "$out" && mkdir -p "$out"
 for theme in light dark; do

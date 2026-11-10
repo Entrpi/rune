@@ -6,6 +6,7 @@ Historical motion strips are separate captures; this updates only named stills.
 """
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -21,8 +22,9 @@ spec.loader.exec_module(kit)
 
 
 def snap(binary, path, *args):
+    # A release build reads Rune's flags only with RUNE_DEV=1.
     subprocess.run([str(ROOT / 'target/release' / binary), *args, '--snap', str(path)],
-                   cwd=ROOT, check=True, capture_output=True)
+                   cwd=ROOT, check=True, capture_output=True, env=dict(os.environ, RUNE_DEV='1'))
 
 
 snap('settings', ROOT / 'demo/settings-dark.png', '--theme', 'dark')

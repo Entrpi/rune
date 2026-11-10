@@ -66,7 +66,7 @@ def command(cfg, name, sc, out, log):
     args += ["--fps", str(cfg.get("fps", 120)), "--frames", str(sc.get("frames", 600))]
     if cfg.get("size") and "--size" not in args:
         args += ["--size", cfg["size"]]
-    env = dict(os.environ)
+    env = dict(os.environ, RUNE_DEV="1")  # a release or perf build reads Rune's flags only with it
     env.update({k: resolve(cfg, v, out) for k, v in {**cfg.get("env", {}), **sc.get("env", {})}.items()})
     if log:
         env["RUNE_FRAME_LOG"] = str(log)

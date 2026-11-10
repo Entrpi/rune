@@ -67,7 +67,7 @@ fn spec() -> AppSpec<State> {
     AppSpec { setup: Some(setup), poll: Some(poll), ..AppSpec::new("Rooms overlay example", (560.0, 440.0), init, view) }
 }
 fn main() {
-    WINDOWED.store(!std::env::args().any(|a| matches!(a.as_str(), "--snap" | "--trace" | "--tree" | "--frames" | "--strip" | "--first-pixels" | "--list-scenes" | "--list-windows")), Ordering::Relaxed);
+    WINDOWED.store(!rune::is_headless(), Ordering::Relaxed);
     rune::run_windows(|displays| {
         let controls = init();
         let cursor = controls.cursor.clone();

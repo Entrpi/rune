@@ -331,6 +331,7 @@ pub use tok::OpticalSize;
 pub use tok::TextStyle;
 pub use tooling::AppSpec;
 pub use tooling::Chrome;
+pub use tooling::dev_tooling;
 pub use tooling::extra_args;
 pub use tooling::is_headless;
 pub use tooling::run;

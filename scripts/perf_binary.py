@@ -1,4 +1,7 @@
-"""Benchmarks time `--profile perf` binaries only. Release builds are incremental, which can move timings."""
+"""Benchmarks time `--profile perf` binaries only. Release builds are incremental, which can move timings.
+
+`perf_binary` also sets RUNE_DEV=1 for the runs: a build without debug assertions reads Rune's flags
+(`--script`, `--frames`, `--first-pixels`, ...) only with it."""
 import os
 from pathlib import Path
 import sys
@@ -20,4 +23,5 @@ def perf_binary(path):
                  'target/perf/ layout). Release builds are incremental, so their timings are not comparable.')
     if not path.is_file():
         sys.exit(f'missing perf binary {path}: build it with `cargo build --profile perf`.')
+    os.environ['RUNE_DEV'] = '1'
     return path

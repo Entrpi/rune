@@ -2421,7 +2421,18 @@ it, and the app then runs under Xvfb. Headless `--snap` runs don't need a displa
 
 ## Agent tooling (headless, no window, same renderer, fixed virtual clock)
 
+A debug build reads these flags from its command line. A build without debug assertions
+(`--release`, `--profile perf`, a shipped app) reads them only when the process has `RUNE_DEV=1`
+or the app calls `rune::dev_tooling()` first in `main`, before anything reads the arguments.
+Otherwise every argument goes to the app's `extra_args` and Rune parses none of them, so a
+shipped app's command line stays the app's and can't make Rune exit. Where Rune reads its flags,
+they behave the same in every build, a malformed one exiting with code 2. An agent driving an
+optimised build sets `RUNE_DEV=1`, as below and as the repo's scripts do. A list an app passes
+with `App::args` is Rune's in any build. An app that needs to know whether Rune took the run
+headless asks `rune::is_headless()` rather than reading the arguments itself.
+
 ```sh
+export RUNE_DEV=1                # an optimised build reads the flags below only with this
 S=target/release/settings
 $S --snap out.png [--scene light] [--at 0.4] [--size 620x520] [--scale 2] [--theme dark|light]
 $S --list-scenes            # default light dark reduced-motion toggles-off accent-pink slow
@@ -2565,8 +2576,8 @@ $L --desktop examples/launcher/backdrop.png --script examples/launcher/scripts/d
   `--native --trace` records wall-clock CPU submission timestamps (not GPU completion or scanout).
   In a window factory, `--window KEY` selects the traced window; otherwise the first is traced.
   macOS windows and overlays acquire drawables on coalesced display-link ticks, stopping the
-  link while idle or hidden. `cargo run --profile perf -p rune --example pacing -- --native --trace
-  pacing.jsonl --frames 240` exercises spring retargets and hide/show; check it with
+  link while idle or hidden. `RUNE_DEV=1 cargo run --profile perf -p rune --example pacing --
+  --native --trace pacing.jsonl --frames 240` exercises spring retargets and hide/show; check it with
   `python3 scripts/check-native-pacing.py pacing.jsonl` on a machine with a display.
   Trees expose inherited `opacity`, `scale` and `blur` (logical points); traces keep opacity in
   element rows and encode scale/blur as named scalar channels (`cm`/`c`/`cg`).
@@ -2581,7 +2592,42 @@ $L --desktop examples/launcher/backdrop.png --script examples/launcher/scripts/d
   bunched onto the screen together) and over 1.5 refresh periods (missed refreshes), and the
   lag from target to present. Overlays, other platforms and headless traces write no present
   fields. Without `--trace` nothing changes. Capture on a display, not headless:
-  `cargo run --profile perf -p rune --example pacing -- --native --trace pacing.jsonl --frames 240`.
+  `RUNE_DEV=1 cargo run --profile perf -p rune --example pacing -- --native --trace pacing.jsonl --frames 240`.
+
+## Environment variables
+
+Every `RUNE_*` variable Rune reads outside its tests. "Any" is any native build. A headless run
+in a build without debug assertions needs `RUNE_DEV=1` or `rune::dev_tooling()` (see "Agent
+tooling"), so the variables that act on one do too. Besides these, `OTEL_EXPORTER_OTLP_ENDPOINT`
+naming a loopback address turns interaction timing on in a debug build, or in another with
+`RUNE_DEV=1` or `rune::dev_tooling()`; alone, it does nothing in an optimised build.
+
+| Variable | Effect | Builds that read it |
+| --- | --- | --- |
+| `RUNE_A11Y_LOG=1` | Logs accessibility activations, actions and updates to stderr. | Any |
+| `RUNE_COMMIT_BUDGET_MS=N` | A line on stderr for each commit over `N` ms, with where its time went. | Any |
+| `RUNE_DEV=1` | Rune's flags and a loopback OTEL endpoint, as in a debug build. | Without debug assertions; a debug build always has both |
+| `RUNE_DEV_GUARDED` | Required by `--hot` and `RUNE_HOT=1`; `scripts/rune-dev` sets it. | `hot` feature |
+| `RUNE_DIRS_ROOT=DIR` | Puts every folder `AppDirs` and `Prefs` write under `DIR`. | Any |
+| `RUNE_DISABLE_DXBC=1` | Compiles the uber shader from WGSL instead of the precompiled DXBC. | Windows |
+| `RUNE_DISABLE_METALLIB=1` | Compiles the built-in Metal shaders at runtime instead of loading the precompiled library. | macOS, iOS |
+| `RUNE_FRAME_LOG=FILE` | Writes each headless frame to `FILE` as a JSON line, then the memory footprint. | `frame-profile` feature; headless runs |
+| `RUNE_GPU_BACKEND=wgpu\|metal` | The Apple GPU backend, over `App::gpu_backend`. | macOS, iOS |
+| `RUNE_GPU_LOG=1` | Prints the GPU adapter chosen and the backend each surface draws with. | Any |
+| `RUNE_HEADLESS_WAIT=SECS` | Holds a headless run before it starts, so a sampling profiler can attach. | Headless runs |
+| `RUNE_HOT=1` | Live editing, like `--hot`, for an app that keeps its arguments from Rune. | `hot` feature |
+| `RUNE_HOT_PARK=FILE` | Desk mode: writes the binary's path to `FILE` and exits, for another Mac to run it. | `hot` feature |
+| `RUNE_METAL_CAPTURE=DIR` | Writes each built-in Metal pipeline's MSL into `DIR` and compiles them at runtime. | macOS, iOS, `metal-backend` feature |
+| `RUNE_MOTION_GATE=FILE` | Records a headless run's motion and writes what `motion_gate` finds to `FILE`. | Headless runs |
+| `RUNE_MOTION_TRACE=FILE` | Where `rune_motion::MotionTrace::from_env` writes a motion trace. | Where an app calls it |
+| `RUNE_OVERLAY_TRACE_INPUT` | Logs each overlay panel pointer event to stderr. | macOS |
+| `RUNE_PERF=1` or `0` | Turns interaction timing on (sent to a local OTLP collector) or off, over the OTEL endpoint. | Any; a headless run only with `1` |
+| `RUNE_PERF_SLOW_MS=N` | Sends an interaction slower than `N` ms at once (default 16.7). | Where interaction timing is on |
+| `RUNE_PERF_WARN=0` | Silences Rune's slow-pattern warnings. | Debug |
+| `RUNE_PLAYGROUND=0` | Leaves the playground out of a window. | Where the app's playground is enabled (debug builds by default) |
+| `RUNE_PREFS_DIR=DIR` | Replaces the config directory `Prefs` keeps `<app id>/prefs.json` in. | Any |
+| `RUNE_READY_DIR=DIR` | Writes `DIR/<bundle id>.<pid>` once the first window is ready. | Any |
+| `RUNE_SYSTEM_MATERIAL=legacy\|unsynced\|off` | How macOS hosts system materials, to compare paths or draw the fallback. | macOS |
 
 ## Playground
 

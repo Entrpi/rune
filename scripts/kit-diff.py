@@ -96,6 +96,7 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("OPENCODE", str(ROOT.parent / "opencode"))
+    os.environ["RUNE_DEV"] = "1"  # a release build reads Rune's flags (--scene, --snap, ...) only with it
 
     if not args.no_build:
         sh(["cargo", "build", "--release", "-q", "-p", "kit-gallery"], cwd=ROOT)

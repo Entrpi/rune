@@ -2,7 +2,7 @@
 //! `cargo run -p launcher` opens the notes window; ⌘Space shows the launcher.
 //!
 //! ```sh
-//! target/release/launcher --desktop examples/launcher/backdrop.png \
+//! RUNE_DEV=1 target/release/launcher --desktop examples/launcher/backdrop.png \
 //!   --script examples/launcher/scripts/demo.json --video demo.mp4 --keys --pointer
 //! ```
 //!
@@ -128,7 +128,8 @@ fn menu_bar_view(_: &(), _: &mut Cx<()>) -> El {
 }
 
 fn main() {
-    DESKTOP.store(std::env::args().any(|a| a == "--desktop"), Ordering::Relaxed);
+    // Rune's `--desktop` only: a build that leaves Rune's flags to the app runs no headless tool.
+    DESKTOP.store(rune::is_headless() && std::env::args().any(|a| a == "--desktop"), Ordering::Relaxed);
     rune::run_windows(|displays| {
         let notes = App::new(AppSpec::new("Notes", (520.0, 320.0), || Notes { selected: 0, focused: true }, notes_view))
             .keep_running()

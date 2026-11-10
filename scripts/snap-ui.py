@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Pin headless regression images. Usage: snap-ui.py OUT [BIN_DIR]. No native windows."""
+import os
 import pathlib
 import subprocess
 import sys
@@ -12,4 +13,6 @@ cases = {
     'settings-light': ('settings', ['--scene', 'light']),
 }
 for name, (binary, args) in cases.items():
-    subprocess.run([str(bin_dir / binary), *args, '--snap', str(out / f'{name}.png')], check=True)
+    # A release build reads Rune's flags only with RUNE_DEV=1.
+    subprocess.run([str(bin_dir / binary), *args, '--snap', str(out / f'{name}.png')], check=True,
+                   env=dict(os.environ, RUNE_DEV='1'))

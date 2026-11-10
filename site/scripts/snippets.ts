@@ -109,7 +109,7 @@ const specs: Record<string, Spec> = {
   "snap-commands": {
     lang: "shell",
     label: "Shell",
-    pieces: [{ file: "examples/live-values/README.md", from: "target/release/live-values --snap", lines: 2 }],
+    pieces: [{ file: "examples/live-values/README.md", from: "RUNE_DEV=1 target/release/live-values --snap", lines: 2 }],
   },
   "tap-script": {
     lang: "ts",

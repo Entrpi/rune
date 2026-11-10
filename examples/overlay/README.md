@@ -38,10 +38,10 @@ An AppHandle's `set_dock_icon` still changes the whole process at runtime.
 
 ```sh
 cargo build --release -p overlay
-target/release/overlay --list-windows
-target/release/overlay --window controls --snap controls.png
-target/release/overlay --window overlay-0 --snap overlay.png --at 2
-target/release/overlay --window overlay-0 --trace overlay.jsonl --frames 720 --fps 120
+RUNE_DEV=1 target/release/overlay --list-windows
+RUNE_DEV=1 target/release/overlay --window controls --snap controls.png
+RUNE_DEV=1 target/release/overlay --window overlay-0 --snap overlay.png --at 2
+RUNE_DEV=1 target/release/overlay --window overlay-0 --trace overlay.jsonl --frames 720 --fps 120
 ```
 
 Headless tools select one window by its stable key and use one virtual display

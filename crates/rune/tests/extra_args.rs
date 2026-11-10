@@ -17,6 +17,7 @@ fn extra_args_are_ready_before_any_window() {
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["child_reads_extras_before_run", "--exact", "--", "--scale", "2", "--doc", "a.txt"])
         .env(CHILD, "1")
+        .env("RUNE_DEV", "1") // so a build without debug assertions reads `--scale` as Rune's too
         .status()
         .unwrap();
     assert!(status.success(), "the child read its extras before run");

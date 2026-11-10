@@ -126,7 +126,8 @@ pub(crate) fn app_id() -> Option<&'static str> {
 /// before any window: called before `run` (to pick the file a window opens, say), it reads
 /// Rune's flags from the process's arguments as `run` will, `--help` and a malformed flag
 /// included. The first read wins, so an app that passes `App::args` reads this after `run`
-/// starts.
+/// starts. A build without debug assertions recognises none of the process's arguments unless
+/// the app called [`dev_tooling`] first or `RUNE_DEV=1` is set: all of them are the app's.
 pub fn extra_args() -> &'static [String] {
     if EXTRA.get().is_none() { Args::parse(); }
     EXTRA.get().map_or(&[], |v| v.as_slice())
@@ -157,6 +158,8 @@ pub(crate) fn runtime_for<S: 'static>(spec: &AppSpec<S>, state: S, size: (f32, f
 mod args;
 #[path = "tooling/crop.rs"]
 mod crop;
+#[path = "tooling/dev_surface.rs"]
+mod dev_surface;
 #[path = "tooling/eased_input.rs"]
 mod eased_input;
 #[path = "tooling/headless.rs"]
@@ -173,6 +176,7 @@ mod strip;
 mod trace;
 
 pub use args::{Args, is_headless};
+pub use dev_surface::dev_tooling;
 pub(crate) use args::*;
 pub use headless::headless;
 pub(crate) use headless::*;

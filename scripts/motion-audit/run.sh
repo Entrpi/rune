@@ -10,6 +10,7 @@ cargo build --release -p todo -p settings -p kit-gallery -p odometer
 cargo build --release -p rune-kit --example shell --example tab_strip
 cargo build --release -p rune --example growth_reorder --example keep_stuck --example sticky --example scroll_keys --example scroll_anchor --example text_glide --example one_snap
 B=${CARGO_TARGET_DIR:-target}/release
+export RUNE_DEV=1  # a release build reads Rune's flags (--script, --trace, ...) only with it
 SH=$B/examples/shell
 GR=$B/examples/growth_reorder
 KS=$B/examples/keep_stuck

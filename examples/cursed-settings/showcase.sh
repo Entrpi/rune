@@ -6,6 +6,7 @@ set -e
 cargo build --release -p cursed-settings 2>&1 | grep -E '^error|-->' | head -40 || true
 cargo build --release -p cursed-settings -q
 bin="${CARGO_TARGET_DIR:-target}/release/cursed-settings"
+export RUNE_DEV=1  # a release build reads Rune's flags only with it
 out=captures/cursed-show
 rm -rf "$out" && mkdir -p "$out"
 script=examples/cursed-settings/scripts/showcase.json

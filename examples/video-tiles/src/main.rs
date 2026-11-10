@@ -37,11 +37,7 @@ fn setup(s: &mut Tiles, wake: Waker) {
         surface.set_waker(wake.clone());
     }
     // Headless scenes use the deterministic initial frame, not a wall-clock producer.
-    if std::env::args()
-        .any(|v| matches!(v.as_str(), "--snap" | "--frames" | "--first-pixels" | "--tree" | "--trace" | "--strip"))
-    {
-        return;
-    }
+    if rune::is_headless() { return; }
     let surfaces = s.surfaces.clone();
     std::thread::spawn(move || {
         for id in 1..=u64::MAX {
