@@ -87,7 +87,9 @@ impl<S: 'static> Runtime<S> {
         let n = &self.nodes[i];
         let Some(spec) = n.text.as_deref() else { return };
         let me = out.len() - 1;
-        let runs = n.input.is_some() || (spec.selectable && !n.is_secure());
+        // A secret has no runs, revealed or masked: their values and character arrays would
+        // give away its text or its length.
+        let runs = (n.input.is_some() || spec.selectable) && !n.is_secure();
         if runs && let Some(lines) = self.a11y_lines(i) {
             for (k, l) in lines.iter().enumerate() {
                 let id = line_id(n.id, k);
@@ -137,10 +139,11 @@ impl<S: 'static> Runtime<S> {
         }
     }
 
-    /// What node `i` draws as text: a field's display text (its mask when secure), else its
-    /// content.
+    /// What node `i` draws as text: a field's display text, else its content. None for a
+    /// secret, whose drawn text is its plaintext when revealed and a dot per character when not.
     pub(super) fn a11y_drawn_text(&self, i: usize) -> Option<String> {
         let n = &self.nodes[i];
+        if n.is_secure() { return None; }
         match n.input.as_deref() {
             Some(input) => Some(input.edit.display().0),
             None => n.text.as_deref().map(|t| t.content.clone()),

@@ -219,7 +219,8 @@ impl<S: 'static> Runtime<S> {
             if input.is_some_and(|i| i.access.is_some()) {
                 node.add_action(Ak::SetValue);
                 node.add_action(Ak::ReplaceSelectedText);
-                node.add_action(Ak::SetTextSelection);
+                // A secret has no text runs for a selection to point into.
+                if !secure { node.add_action(Ak::SetTextSelection); }
             }
             if scroll.is_some() {
                 node.add_action(Ak::ScrollUp);

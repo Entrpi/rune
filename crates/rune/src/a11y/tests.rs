@@ -301,6 +301,104 @@ fn secure_fields_never_expose_their_text() {
 }
 
 #[derive(Default)]
+struct Secrets {
+    pw: TextEdit,
+    key: TextEdit,
+}
+
+const PW: &str = "hunter2!";
+const KEY: &str = "sk-live-0042\nsecond-line";
+
+fn secrets_rt(revealed: bool) -> Runtime<Secrets> {
+    let mut pw = TextEdit::new(PW).secure().revealed(revealed);
+    pw.focused = true;
+    let key = TextEdit::new(KEY).secure().revealed(revealed);
+    let mut rt = Runtime::new(Secrets { pw, key }, |s: &Secrets, _: &mut Cx<Secrets>| {
+        col()
+            .child(text_input(&s.pw, crate::tok::type_::BODY).key("pw").single_line().label("Password").w(200.0)
+                .on_edit(|s: &mut Secrets| &mut s.pw))
+            .child(text_input(&s.key, crate::tok::type_::BODY).key("key").label("Private key").w(200.0)
+                .on_edit(|s: &mut Secrets| &mut s.key))
+    }, (400.0, 300.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt
+}
+
+/// No text a node carries holds a secret, its pieces, or the mask that counts its characters.
+fn holds_no_secret(n: &accesskit::Node) {
+    for s in [n.value(), n.label(), n.description(), n.placeholder()].into_iter().flatten() {
+        for part in ["hunter2", "sk-live", "second-line", "•"] { assert!(!s.contains(part), "{s:?} holds {part:?}"); }
+    }
+    assert_ne!(n.role(), Role::TextRun, "a run gives away its characters");
+    assert!(n.character_lengths().is_empty() && n.word_starts().is_empty());
+}
+
+/// The secure field keyed `key` and all its descendants in `update`: the field keeps its role,
+/// name and actions, and nothing under it says what it holds or how long it is.
+fn secure_field_exposes_nothing(update: &accesskit::TreeUpdate, key: &str, name: &str) {
+    let nodes: crate::runtime::HashMap<_, _> = update.nodes.iter().map(|(id, n)| (*id, n)).collect();
+    let (_, field) = update.nodes.iter().find(|(_, n)| n.author_id() == Some(key)).expect("the field");
+    assert_eq!((field.role(), field.label(), field.value()), (Role::PasswordInput, Some(name), None));
+    let mut stack = vec![field];
+    while let Some(n) = stack.pop() {
+        holds_no_secret(n);
+        stack.extend(n.children().iter().filter_map(|c| nodes.get(c).copied()));
+    }
+    assert!(field.children().is_empty(), "{key}: {:?}", field.children());
+    assert!(field.text_selection().is_none(), "a selection points into runs");
+    for a in [Ak::Click, Ak::Focus, Ak::SetValue, Ak::ReplaceSelectedText] { assert!(field.supports_action(a), "{key}: {a:?}"); }
+    assert!(!field.supports_action(Ak::SetTextSelection), "{key}: no runs to select in");
+}
+
+// What each platform's own secure field exposes, from its vendor's documentation:
+// - UI Automation (Microsoft's "Edit Control Type" and "IsPassword" pages): a password edit
+//   sets IsPassword so a reader stops echoing keys, and reading its Value must return an
+//   error. The pages require the Text pattern on every edit but don't say what a password
+//   edit's text holds.
+// - NSSecureTextField (VoiceOver) and a GTK password entry (AT-SPI): yet to be written down.
+// Rune sends no value and no text runs, so neither the characters nor their count. Runs
+// would give the count even masked: AccessKit's consumer masks a password's runs to one
+// bullet per character.
+#[test]
+fn secure_fields_send_no_text_runs_masked_or_revealed() {
+    for revealed in [false, true] {
+        let rt = secrets_rt(revealed);
+        assert!(rt.state.pw.is_revealed() == revealed && rt.state.key.is_revealed() == revealed);
+        let tree = rt.accessibility_tree();
+        secure_field_exposes_nothing(&tree, "pw", "Password");
+        secure_field_exposes_nothing(&tree, "key", "Private key");
+        for (_, n) in &tree.nodes { holds_no_secret(n); }
+        // The dump with every text run in it: none sits under a secret, and no secret is in it.
+        let json = crate::a11y::dump::json(&tree, true);
+        for key in ["pw", "key"] {
+            let field = find(&json, key).unwrap();
+            assert!(field["children"].is_null() && field["chars"].is_null() && field["value"].is_null(), "{field}");
+        }
+        let all = json.to_string();
+        assert!(!all.contains("hunter2") && !all.contains("sk-live") && !all.contains('•'), "{all}");
+    }
+}
+
+#[test]
+fn revealing_and_concealing_a_secure_field_sends_no_text() {
+    let mut rt = secrets_rt(false);
+    rt.a11y_activate("Secrets");
+    let full = rt.a11y_update().expect("the whole tree");
+    secure_field_exposes_nothing(&full, "pw", "Password");
+    for revealed in [true, false] {
+        rt.update(|s, _| { s.pw.set_revealed(revealed); s.key.set_revealed(revealed); });
+        rt.frame(0.0);
+        let update = rt.a11y_update().expect("the fields' text moved");
+        assert!(update.nodes.iter().any(|(_, n)| n.author_id() == Some("pw")), "revealed {revealed}");
+        for (_, n) in &update.nodes { holds_no_secret(n); }
+        for (_, n) in update.nodes.iter().filter(|(_, n)| n.role() == Role::PasswordInput) {
+            assert!(n.children().is_empty() && n.value().is_none() && n.text_selection().is_none());
+            assert!(!n.supports_action(Ak::SetTextSelection));
+        }
+    }
+}
+
+#[derive(Default)]
 struct Linked {
     opened: Vec<String>,
 }
