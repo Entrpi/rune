@@ -57,6 +57,7 @@ mod image;
 mod interrupt;
 mod link_icon;
 mod links;
+mod map;
 mod parser;
 mod plain;
 mod render;
@@ -81,7 +82,8 @@ use autolink::autolink_inline;
 use cache::{doc_cached, stream_cached};
 #[cfg(test)]
 use cache::{CACHE, PARSES};
-use parser::{BlockMap, CLOSE, Cut, PAD, ParsedDoc, Source, SpanMap, parse_doc, unpadded};
+use map::{BlockMap, SpanMap};
+use parser::{CLOSE, Cut, PAD, ParsedDoc, Source, parse_doc, unpadded};
 use render::{Renderer, hash_of, rendered_keys, source_copy};
 use stream::parse_streaming;
 
