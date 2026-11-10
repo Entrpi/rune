@@ -96,24 +96,25 @@ enum Input {
 }
 
 impl Input {
-    fn decode(self) -> Result<Decoded, ImageError> {
+    /// The image's mips; `files` lets an SVG's `<image>` read a local file.
+    fn decode(self, files: bool) -> Result<Decoded, ImageError> {
         match self {
-            Input::Encoded(bytes) => decode(&bytes),
+            Input::Encoded(bytes) => decode(&bytes, files),
             Input::Rgba(w, h, bytes) => mip_chain(w, h, &bytes),
-            Input::Svg(bytes, px) => svg_rgba(&bytes, px).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
+            Input::Svg(bytes, px) => svg_rgba(&bytes, px, files).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
             #[cfg(not(target_arch = "wasm32"))]
             Input::Icon(path, px) => app_icon_rgba(&path, px).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
             #[cfg(not(target_arch = "wasm32"))]
             Input::File(path, px) => {
                 let bytes = std::fs::read(&path).map_err(|e| ImageError(format!("{}: {e}", path.display())))?;
                 if has_svg_extension(&path) || is_svg(&bytes) {
-                    svg_rgba(&bytes, px).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes))
+                    svg_rgba(&bytes, px, files).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes))
                 } else {
-                    decode(&bytes)
+                    decode(&bytes, false)
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            Input::Url(url, px) => Input::File(from_url::file_path(&url)?, px).decode(),
+            Input::Url(url, px) => Input::File(from_url::file_path(&url)?, px).decode(files),
             #[cfg(target_arch = "wasm32")]
             Input::Icon(..) => Err(ImageError("filesystem images are unsupported on web".into())),
             // Fetched asynchronously by `ImageCache::request`.
@@ -127,14 +128,14 @@ impl Input {
     /// `decode`, with a panic in a codec (a malformed file can still trip one) failing this
     /// image instead of unwinding the worker, which would leave it pending and fail every later one.
     #[cfg(not(target_arch = "wasm32"))]
-    fn decode_caught(self) -> Result<Decoded, ImageError> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.decode())).unwrap_or_else(|panic| {
+    fn decode_caught(self, files: bool) -> Result<Decoded, ImageError> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.decode(files))).unwrap_or_else(|panic| {
             let why = panic.downcast_ref::<&str>().copied().or_else(|| panic.downcast_ref::<String>().map(String::as_str));
             Err(ImageError(format!("image decoder panicked: {}", why.unwrap_or("no message"))))
         })
     }
 }
-struct Job { image: Image, input: Input }
+struct Job { image: Image, input: Input, svg_files: bool }
 /// Decoder threads per cache, at most one per core.
 #[cfg(not(target_arch = "wasm32"))]
 const DECODERS: usize = 4;
@@ -144,6 +145,8 @@ const DECODERS: usize = 4;
 /// queued requests complete. The waker should be the one supplied by `AppSpec::setup`.
 pub struct ImageCache {
     entries: Mutex<HashMap<ImageId, Weak<State>>>,
+    /// [`ImageCache::svg_file_images`].
+    svg_files: bool,
     #[cfg(not(target_arch = "wasm32"))]
     jobs: mpsc::Sender<Job>,
     #[cfg(target_arch = "wasm32")]
@@ -152,7 +155,7 @@ pub struct ImageCache {
 impl ImageCache {
     #[cfg(target_arch = "wasm32")]
     pub fn new(wake: crate::Waker) -> Self {
-        Self { entries: Mutex::new(HashMap::new()), wake }
+        Self { entries: Mutex::new(HashMap::new()), svg_files: false, wake }
     }
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(waker: crate::Waker) -> Self {
@@ -164,12 +167,22 @@ impl ImageCache {
             std::thread::Builder::new().name("rune-images".into()).spawn(move || {
                 loop {
                     let Ok(job) = receive.lock().unwrap_or_else(|e| e.into_inner()).recv() else { return };
-                    job.image.finish(job.input.decode_caught());
+                    job.image.finish(job.input.decode_caught(job.svg_files));
                     waker();
                 }
             }).expect("image worker");
         }
-        Self { entries: Mutex::new(HashMap::new()), jobs }
+        Self { entries: Mutex::new(HashMap::new()), svg_files: false, jobs }
+    }
+
+    /// Lets the SVGs this cache draws embed image files by path (`<image href="logo.png">`,
+    /// absolute or relative to the working directory, as usvg reads them): for SVGs the app
+    /// ships or otherwise trusts. Off, as it starts, an SVG draws only `data:` images, so one
+    /// from a web response, a chat message or a model's reply reads no local file. Either way
+    /// only a regular file is read, never a FIFO or a device, and no web build reads files.
+    pub fn svg_file_images(mut self, on: bool) -> Self {
+        self.svg_files = on;
+        self
     }
 
     /// PNG (APNG animates), JPEG, GIF and WebP (both animate), BMP, ICO, AVIF (with the `avif`
@@ -284,7 +297,7 @@ impl ImageCache {
         let image = Image::new(Arc::new(State { id, pixels: crate::Pixels::from_url(url, srcset), decoded: OnceLock::new() }));
         entries.insert(id, Arc::downgrade(&image.0));
         #[cfg(not(target_arch = "wasm32"))]
-        if self.jobs.send(Job { image: image.clone(), input }).is_err() {
+        if self.jobs.send(Job { image: image.clone(), input, svg_files: self.svg_files }).is_err() {
             let _ = image.0.decoded.set(Err(ImageError("image worker stopped".into())));
         }
         #[cfg(target_arch = "wasm32")]
@@ -293,7 +306,7 @@ impl ImageCache {
             // guess, replaced in the same frame once layout knows the size) fetches nothing,
             // and one dropped while its bytes download is never decoded.
             let weak = Arc::downgrade(&image.0);
-            let wake = self.wake.clone();
+            let (wake, files) = (self.wake.clone(), self.svg_files);
             wasm_bindgen_futures::spawn_local(async move {
                 let decoded = match input {
                     Input::Url(url, px) => {
@@ -307,7 +320,7 @@ impl ImageCache {
                         if !wanted(&weak) { return; }
                         match decoded { Ok(fetched) => from_url::land_in_slices("image", fetched, 0).await, Err(e) => Err(e) }
                     }
-                    input => input.decode(),
+                    input => input.decode(files),
                 };
                 let Some(state) = weak.upgrade() else { return };
                 Image::new(state).finish(decoded);
@@ -439,34 +452,10 @@ fn linux_icon(path: &std::path::Path, px: u32) -> Result<(u32, u32, Vec<u8>), Im
     } else { path.to_path_buf() };
     let bytes = std::fs::read(&file).map_err(|e| ImageError(format!("{}: {e}", file.display())))?;
     if bytes.len() > 16 << 20 { return Err(ImageError(format!("{} is too large for an icon", file.display()))); }
-    if has_svg_extension(&file) { return svg_rgba(&bytes, px); }
+    if has_svg_extension(&file) { return svg_rgba(&bytes, px, false); }
     let image = image::load_from_memory(&bytes).map_err(|e| ImageError(format!("{}: {e}", file.display())))?.into_rgba8();
     if image.width() > 1024 || image.height() > 1024 { return Err(ImageError(format!("{} is too large for an icon", file.display()))); }
     Ok((image.width(), image.height(), image.into_raw()))
-}
-
-/// An SVG scaled to fit `px` square, keeping its aspect ratio, as straight-alpha sRGB RGBA8.
-/// `px == 0` rasterizes at twice the drawing's own size, at most 4096 pixels per side.
-#[cfg(feature = "svg")]
-pub(crate) fn svg_rgba(bytes: &[u8], px: u32) -> Result<(u32, u32, Vec<u8>), ImageError> {
-    use resvg::{tiny_skia, usvg};
-    if bytes.len() > 32 << 20 { return Err(ImageError("SVG is too large".into())); }
-    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(|e| ImageError(format!("SVG: {e}")))?;
-    let size = tree.size();
-    let px = if px == 0 { (size.width().max(size.height()) * 2.0).ceil().clamp(1.0, 4096.0) as u32 } else { px };
-    let k = px as f32 / size.width().max(size.height());
-    let (w, h) = (((size.width() * k).round() as u32).clamp(1, px), ((size.height() * k).round() as u32).clamp(1, px));
-    let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| ImageError("empty SVG".into()))?;
-    resvg::render(&tree, tiny_skia::Transform::from_scale(k, k), &mut pixmap.as_mut());
-    Ok((w, h, pixmap.pixels().iter().flat_map(|p| {
-        let c = p.demultiply();
-        [c.red(), c.green(), c.blue(), c.alpha()]
-    }).collect()))
-}
-
-#[cfg(not(feature = "svg"))]
-pub(crate) fn svg_rgba(_: &[u8], _: u32) -> Result<(u32, u32, Vec<u8>), ImageError> {
-    Err(ImageError("SVG images need rune's `svg` feature".into()))
 }
 
 /// Freedesktop icon lookup: a `.desktop` entry's `Icon=` as an absolute path, or by name in the
@@ -616,9 +605,9 @@ unsafe fn macos_bitmap(
     }
 }
 
-fn decode(bytes: &[u8]) -> Result<Decoded, ImageError> {
+fn decode(bytes: &[u8], svg_files: bool) -> Result<Decoded, ImageError> {
     if is_svg(bytes) {
-        let (w, h, rgba) = svg_rgba(bytes, 0)?;
+        let (w, h, rgba) = svg_rgba(bytes, 0, svg_files)?;
         return mip_chain(w, h, &rgba);
     }
     if avif::is_avif(bytes) {
@@ -677,7 +666,17 @@ mod avif;
 mod from_url;
 mod mips;
 pub(crate) mod pixels;
+#[cfg(feature = "svg")]
+mod svg;
 use mips::mip_chain;
+#[cfg(feature = "svg")]
+pub(crate) use svg::svg_rgba;
+
+/// Without the `svg` feature, an SVG resolves to an error.
+#[cfg(not(feature = "svg"))]
+pub(crate) fn svg_rgba(_: &[u8], _: u32, _: bool) -> Result<(u32, u32, Vec<u8>), ImageError> {
+    Err(ImageError("SVG images need rune's `svg` feature".into()))
+}
 #[cfg(test)]
 use mips::byte;
 #[cfg(not(target_arch = "wasm32"))]
@@ -786,7 +785,7 @@ mod tests {
             source.write_to(&mut encoded, format).unwrap();
             let bytes = encoded.into_inner();
             assert_eq!(browser_decodes(&bytes), format == image::ImageFormat::Jpeg, "web decodes JPEG in the browser, PNG itself");
-            let d = decode(&bytes).unwrap();
+            let d = decode(&bytes, false).unwrap();
             assert_eq!((d.mips[0].width, d.mips[0].height), (8, 4));
             assert_eq!((d.mips.last().unwrap().width, d.mips.last().unwrap().height), (1, 1));
             if format == image::ImageFormat::Png {
@@ -796,9 +795,9 @@ mod tests {
                 icns.extend_from_slice(&((bytes.len() + 8) as u32).to_be_bytes());
                 icns.extend_from_slice(&bytes);
                 assert!(!browser_decodes(&icns));
-                assert_eq!(decode(&icns).unwrap().mips[0].pixels, d.mips[0].pixels);
+                assert_eq!(decode(&icns, false).unwrap().mips[0].pixels, d.mips[0].pixels);
                 icns[12..16].copy_from_slice(&0u32.to_be_bytes());
-                assert!(decode(&icns).is_err());
+                assert!(decode(&icns, false).is_err());
             }
         }
         assert!(mip_chain(0, 1, &[]).is_err());
@@ -827,9 +826,9 @@ mod tests {
         rotated.extend_from_slice(&app1);
         rotated.extend_from_slice(&jpeg[2..]);
 
-        let plain = decode(&jpeg).unwrap();
+        let plain = decode(&jpeg, false).unwrap();
         assert_eq!((plain.mips[0].width, plain.mips[0].height), (16, 8));
-        let upright = decode(&rotated).unwrap();
+        let upright = decode(&rotated, false).unwrap();
         let top = &upright.mips[0];
         assert_eq!((top.width, top.height), (8, 16), "turned a quarter");
         let at = |x: u32, y: u32| &top.pixels[((y * top.width + x) * 4) as usize..][..3];

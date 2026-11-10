@@ -1880,6 +1880,46 @@ so fetch remote bytes yourself and call `load`. `cache.load` recognises SVG by i
 own size. SVG text needs fonts resvg isn't given, so convert text to paths. With the feature
 off, SVG images resolve to `Image::error`.
 
+An SVG may come from anywhere (a web response, a chat message, a model's reply), so Rune bounds
+what its decode can spend, and refuses a document past a bound with an `Image::error`:
+
+- An `<image>` draws only a `data:` image: one naming a local file reads nothing, unless the app
+  trusts its SVGs with `ImageCache::new(waker).svg_file_images(true)`, and even then only a
+  regular file is read, never a FIFO or a device.
+- SVGZ inflates to at most 64 MiB.
+- Elements nest at most 64 deep, read from the markup before the XML parses (roxmltree parses a
+  level per stack frame on a decode thread's 2 MiB stack, and a nested SVG image draws inside its
+  parent's levels). An entity's markup can be referenced ten deep, so the deepest markup among
+  the entities the document references counts ten times; an entity it never references counts
+  nothing.
+- After usvg builds the tree, its nodes are counted (so a `<use>` fan-out that expands past
+  100,000 is refused) and the pixels its images and pattern tiles would draw are counted, in
+  saturating `f64` so a dimension near `u32::MAX` can't wrap, and refused past four 4096 px
+  canvases.
+- A raster is at most 4096 pixels a side, whatever size is asked for, `url_set`'s listed widths
+  included.
+
+What Rune does not stop, because it does not re-implement usvg's reference resolution: a
+reference cycle or loop among clip paths, masks, filters, gradients, patterns or markers is
+resolved inside usvg 0.45 before any of the bounds above run. usvg's own cycle check catches
+only one- and two-element cases, so a longer ring — a clip-path ring however it is spelled
+(plain, whitespace in a quoted `url()`, through `@import`, through duplicate or SVG-namespaced
+ids, through `clip-path: inherit`, a namespaced `href`, a `<use>` that moves an element out of a
+clip path, or a comment splitting a `<style>`) and a two-node gradient `href` loop — overflows
+the decode thread's stack (which aborts the app) or hangs it. A mask or marker fan-out, a
+`tref` copied per reference, a declaration or selector that expands combinatorially likewise
+exhaust memory or time inside usvg's preprocessing. These are usvg bugs. resvg fixes the cycle
+and overflow class in [#1225](https://github.com/linebender/resvg/pull/1225) (an iterative cycle
+search over the resolved tree) and adds a configurable parse depth in
+[#1223](https://github.com/linebender/resvg/pull/1223); a corpus of these cases confirms resvg
+git main draws every ring and ends the gradient loop, though the fan-out and selector hangs
+remain. Rune gets the cycle fix by upgrading to the first resvg release that carries #1225, not
+by parsing the document itself.
+
+These bound what an SVG builds, not how much it paints: thousands of shapes that each cover the
+canvas still draw, slowly, on a decode thread. On web an SVG rasterizes on the main thread in one
+piece; only the mips after it are sliced.
+
 `El::pixels_fit(&pixels, SurfaceFit::Fit)` keeps the image's aspect ratio, letterboxed and
 centred on whole device pixels (the corner radius rounds the image itself); `SurfaceFit::Fill`
 covers the rect and crops the centred overflow, choosing the mip for the uncropped size.

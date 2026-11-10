@@ -68,7 +68,7 @@ pub(super) enum Fetched {
 pub(super) fn land(url: &str, fetched: Fetched, px: u32) -> Result<Decoded, ImageError> {
     match fetched {
         Fetched::Rgba(w, h, bytes) => mip_chain(w, h, &bytes),
-        Fetched::Svg(bytes) => svg_rgba(&bytes, px).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
+        Fetched::Svg(bytes) => svg_rgba(&bytes, px, false).and_then(|(w, h, bytes)| mip_chain(w, h, &bytes)),
     }
     .map_err(|e| ImageError(format!("{url}: {e}")))
 }
@@ -82,7 +82,7 @@ pub(super) async fn land_in_slices(url: &str, fetched: Fetched, px: u32) -> Resu
     let named = |e: ImageError| ImageError(format!("{url}: {e}"));
     let (w, h, bytes) = match fetched {
         Fetched::Rgba(w, h, bytes) => (w, h, bytes),
-        Fetched::Svg(bytes) => svg_rgba(&bytes, px).map_err(named)?,
+        Fetched::Svg(bytes) => svg_rgba(&bytes, px, false).map_err(named)?,
     };
     let mut steps = super::mips::MipSteps::new(w, h, &bytes).map_err(named)?;
     while !steps.step(SLICE) {

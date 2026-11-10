@@ -29,7 +29,7 @@ macos-background-cursor = []
 ogg-audio = ["dep:symphonia", "dep:opuscule"]
 # SVG and SVGZ images (`ImageCache::svg`, `file`, `load_mime`, and `load` on sniffed SVG bytes), and
 # scalable Linux app icons, rasterized by resvg. Off, those images resolve to `Image::error`.
-svg = ["dep:resvg"]
+svg = ["dep:resvg", "dep:flate2"]
 # AVIF images (`ImageCache::load` on AVIF bytes), decoded natively by rav1d, a Rust port of
 # dav1d; an animated AVIF shows its first frame. Building it for x86 needs NASM on the PATH for
 # rav1d's assembly. Off, AVIF bytes resolve to `Image::error`. No effect on web, where the
@@ -93,6 +93,8 @@ icu_properties = { version = "2.3", default-features = false, features = ["compi
 # Words for a double-click, with the dictionaries Parley's `complex-scripts` links.
 icu_segmenter = { version = "2.3", default-features = false, features = ["compiled_data"] }
 resvg = { version = "0.45", default-features = false, optional = true }
+# SVGZ, inflated through a cap before usvg sees it (usvg inflates to the end).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"], optional = true }
 
 [target.'cfg(all(unix, not(target_os = "linux")))'.dependencies]
 # The thread CPU clock for frame profiles and debug builds' stall warnings.

@@ -96,7 +96,7 @@ fn rasterize(icon: &Icon, px: u32, current: &str, one: Option<Color>) -> Option<
     let doc = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 {v} {v}">{body}</svg>"#
     );
-    let (w, h, mut rgba) = crate::image::svg_rgba(doc.as_bytes(), px).ok()?;
+    let (w, h, mut rgba) = crate::image::svg_rgba(doc.as_bytes(), px, false).ok()?;
     // One colour: the drawing's coverage in it; its alpha comes from the instance.
     if let Some(c) = one {
         let rgb = [c.r, c.g, c.b].map(|v| (crate::color::srgb_encode(v) * 255.0).round() as u8);
