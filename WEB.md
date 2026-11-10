@@ -233,10 +233,19 @@ Mobile `beforeinput` line breaks use Rune's Enter rules: submit, or Shift/Alt+En
 in a multiline field. A completed touch tap focuses the editor synchronously;
 a pan scrolls instead, with momentum and a damped edge return.
 
-Secure fields use an `<input type="password">` with autocomplete, autocorrect and spellcheck
-disabled. It receives only new keystrokes and is emptied after every input; the model's
-secret is never mirrored into the DOM. Leaving a field returns focus to the canvas so
-shortcuts and Tab keep working. Continuous pointer movement and wheel events wait for rAF.
+Secure fields use an `<input type="password">` with `autocomplete="current-password"`, which
+lets the browser and password managers offer saved passwords, and with autocorrect and
+spellcheck disabled. It is emptied after every input; the model's secret is never mirrored
+into the DOM. An `input` event on it is a fill when it has no `inputType`, when its `inputType`
+is `insertReplacementText`, when it is an `insertText` whose `data` (or, with no `data`, the
+value it left) is more than one grapheme cluster, or when the element matches `:autofill` or
+`:-webkit-autofill` as it fires. Without `Intl.Segmenter` an `insertText` is always typed. A
+fill replaces the field's whole text as one edit, even with an empty value. Any other input
+inserts at the caret, so a tool that types a saved password one key at a time adds it to what
+is there; paste takes its own path. `node --test crates/rune/src/platform/web/bridge.test.mjs`
+checks this classification and the listener that sends it.
+Leaving a field returns focus to the canvas so shortcuts and Tab keep working. Continuous
+pointer movement and wheel events wait for rAF.
 
 `Tx::copy` and `Tx::request_paste` use the browser clipboard. Call them from a user input
 handler: permission and transient-activation rules still apply. Native Paste events work
@@ -283,8 +292,9 @@ composition, selection, paste, copied model text, link isolation, theme and view
 In Chromium it also installs Playwright's fake clock after the app has started and checks that
 a touch fling waits for `clock.runFor` instead of finishing in real time: Rune reads the page's
 current `performance.now()` on every frame, so a capture can step it frame by frame.
-The `?input-proof` fixture adds password input, Tab/Escape focus, mobile Enter, recomposition,
-same-field focus stability, continuous-input coalescing and visibility regression checks.
+The `?input-proof` fixture adds password input, fill and paste, Tab/Escape focus, mobile Enter,
+recomposition, same-field focus stability, continuous-input coalescing and visibility
+regression checks.
 Its mobile DPR check exercises the Safari-style CSS-size fallback because Chromium device
 emulation does not scale `devicePixelContentBoxSize`. This is not a real iPhone keyboard,
 dictation, autocorrect or Safari WebGPU test; those still need device verification.

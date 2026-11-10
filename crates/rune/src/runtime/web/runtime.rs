@@ -199,6 +199,10 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod fill_tests;
+
 /// Reject offsets in the middle of a surrogate pair, rather than corrupting the Rust string.
 fn byte_at(text: &str, utf16: usize) -> Option<usize> {
     let mut units = 0;
@@ -255,6 +259,20 @@ impl<S: 'static> Runtime<S> {
         if self.focus.path() == Some(key) && self.has_secure_focus() {
             self.key(event);
         }
+    }
+
+    /// A fill from the browser's autofill or a password manager: the whole value at once, so it
+    /// replaces the field's text as one edit rather than typing at its caret.
+    pub(crate) fn web_secure_replace(&mut self, key: &str, text: String) {
+        let text = zeroize::Zeroizing::new(text);
+        if self.focus.path() != Some(key) || !self.has_secure_focus() { return; }
+        let mut tx = self.transaction();
+        let changed = self.with_focused(|edit| {
+            edit.set_selection(0, edit.text.len());
+            edit.paste(&text)
+        }, &mut tx);
+        if changed { self.dirty = true; }
+        merge(&mut self.pending, tx);
     }
 
     pub(crate) fn web_edit(&mut self, event: &serde_json::Value) {

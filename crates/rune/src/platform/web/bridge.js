@@ -1,5 +1,8 @@
 // Browser text services and semantic DOM accessibility mirror.
 const coarse = () => matchMedia('(pointer: coarse)').matches;
+// `matches` throws on a pseudo-class the browser doesn't know.
+const autofilled = el => [':autofill', ':-webkit-autofill'].some(s => { try { return el.matches(s); } catch { return false; } });
+const graphemes = globalThis.Intl?.Segmenter ? new Intl.Segmenter() : null;
 const high = n => n >= 0xd800 && n <= 0xdbff;
 const low = n => n >= 0xdc00 && n <= 0xdfff;
 function boundary(text, at, forward) {
@@ -24,6 +27,40 @@ function replacement(old, next, composition, caret) {
         }
     }
     return { start, end, text: next.slice(start, nextEnd) };
+}
+
+// What the password sink sends Rust for one `input` event, from its `inputType` and `data`,
+// whether the element matched `:autofill`, and the value it held. A password field takes no
+// IME, autocorrect or dictation, so a keystroke inserts one character: `secure` types it at the
+// caret. Whatever sets the whole value at once (autofill, a password manager, a script's or a
+// test driver's select-then-insert) is a fill: `secure_replace` replaces the field's text, even
+// with nothing. An `insertText` with no `data` is read from the value, which holds exactly what
+// the event added (the input is emptied after each one). Paste has its own listener; one that
+// reached here would type, not replace.
+export function secureKind(inputType, data, autofill, value) {
+    const fill = !inputType || inputType === 'insertReplacementText' || autofill
+        || (inputType === 'insertText' && several(data ?? value));
+    return fill ? 'secure_replace' : value ? 'secure' : null;
+}
+
+// Whether `text` holds more than one grapheme cluster. Without Intl.Segmenter one emoji of
+// several code points can't be told from two characters, so it says no: a keystroke must never
+// replace the field.
+function several(text) {
+    if (!graphemes) return false;
+    let n = 0;
+    for (const _ of graphemes.segment(text)) if (++n > 1) return true;
+    return false;
+}
+
+// One `input` event on the password input `input`: what it held goes to Rust as typing or a
+// fill, and the input is emptied in the same task. `key` is the Rune field with the keyboard;
+// with none, nothing is sent.
+export function passwordInput(event, input, key, send) {
+    const text = input.value;
+    const kind = secureKind(event.inputType, event.data, autofilled(input), text);
+    input.value = '';
+    if (kind && key) send({ kind, key, text });
 }
 
 function browserShortcut(event) {
@@ -53,7 +90,7 @@ export function mount(canvas, callback, embedded, fitHeight, page) {
     const password = document.createElement('input');
     password.type = 'password';
     password.setAttribute('aria-label', 'Password input');
-    password.autocomplete = 'off';
+    password.autocomplete = 'current-password';
     password.setAttribute('autocorrect', 'off');
     password.setAttribute('autocapitalize', 'off');
     password.spellcheck = false;
@@ -127,11 +164,7 @@ export function mount(canvas, callback, embedded, fitHeight, page) {
         h.composing = false; h.composition = '';
         send({ kind: 'sync' });
     });
-    listen(password, 'input', () => {
-        const text = password.value;
-        password.value = '';
-        if (text) send({ kind: 'secure', key: h.key, text });
-    });
+    listen(password, 'input', event => passwordInput(event, password, h.key, send));
     for (const field of [textarea, password]) {
         listen(field, 'paste', event => {
             // Only a paste into a Rune field is Rune's; the browser keeps the rest.

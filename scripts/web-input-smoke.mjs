@@ -64,7 +64,7 @@ export async function inputSmoke(page, url) {
     await page.keyboard.press('Tab'); // Secure editor must activate a password sink.
     assert.equal(await page.evaluate(() => document.activeElement.type), 'password');
     const password = page.locator('input[type=password]');
-    assert.equal(await password.getAttribute('autocomplete'), 'off');
+    assert.equal(await password.getAttribute('autocomplete'), 'current-password');
     assert.equal(await password.getAttribute('autocorrect'), 'off');
     assert.equal(await password.evaluate(p => p.spellcheck), false);
     await page.keyboard.insertText('sëcret');
@@ -76,6 +76,26 @@ export async function inputSmoke(page, url) {
     })));
     await settle();
     assert.equal((await snapshot()).secretLength, 5);
+    // A fill replaces what was typed: fill() selects the field and inserts the whole value.
+    await password.fill('0123456789abc');
+    await settle();
+    assert.equal((await snapshot()).secretLength, 13, 'a fill replaces the typed characters');
+    await password.fill('ZYXWVUTSRQ');
+    await settle();
+    assert.equal((await snapshot()).secretLength, 10, 'a second fill leaves only its own value');
+    // Autofill sets the value and sends an input event with no inputType.
+    await password.evaluate(field => { field.value = 'saved'; field.dispatchEvent(new Event('input', { bubbles: true })); });
+    await settle();
+    assert.equal((await snapshot()).secretLength, 5, 'autofill replaces the field');
+    assert.equal(await password.inputValue(), '', 'a fill leaves no secret in the DOM');
+    // A paste inserts at the caret rather than replacing the field.
+    await password.evaluate(field => {
+        const data = new DataTransfer();
+        data.setData('text/plain', 'xy');
+        field.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+    });
+    await settle();
+    assert.equal((await snapshot()).secretLength, 7, 'a paste adds to the filled value');
     await page.keyboard.press('Enter');
     await settle();
     assert.equal((await snapshot()).submits, 3);
@@ -121,6 +141,7 @@ export async function inputSmoke(page, url) {
     await settle();
     assert.equal((await snapshot()).visible, true);
     console.log(JSON.stringify({ inputRegressions: 'passed', checks: ['stable editor focus', 'recomposition range',
-        'beforeinput Enter', 'multiline vs single-line', 'password sink and deletion', 'Tab to canvas',
-        'Escape shortcuts', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title', 'nonfatal window requests'] }));
+        'beforeinput Enter', 'multiline vs single-line', 'password sink and deletion', 'password fill and paste',
+        'Tab to canvas', 'Escape shortcuts', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title',
+        'nonfatal window requests'] }));
 }

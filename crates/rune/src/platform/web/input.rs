@@ -157,6 +157,11 @@ impl<S: 'static> Running<S> {
                     self.rt.web_secure(event["key"].as_str().unwrap_or_default(), text);
                 }
             }
+            Some("secure_replace") => {
+                if let serde_json::Value::String(text) = event["text"].take() {
+                    self.rt.web_secure_replace(event["key"].as_str().unwrap_or_default(), text);
+                }
+            }
             Some("key") => activate = self.rt.web_key(event),
             Some("a11y_press" | "a11y_link") => { let _ = self.rt.web_a11y_action(event); }
             // The page scrolled: draw the band in view, and hover what is now under the pointer.
