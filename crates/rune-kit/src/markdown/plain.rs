@@ -55,7 +55,7 @@ fn plain(blocks: &[Block], tasks: &[Option<(bool, usize)>], task: &mut usize, co
                     };
                     let marker = format!("{}{}", " ".repeat(cols.into()), mark.marker());
                     let before = if k == 0 && lists == 0 { 2 } else { 1 };
-                    plain(item, tasks, task, cols + mark.width(), lists + 1, Some((marker, before)), out);
+                    plain(item, tasks, task, cols.saturating_add(mark.width()), lists + 1, Some((marker, before)), out);
                 }
             }
             Block::Table(t) => {

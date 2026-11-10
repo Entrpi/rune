@@ -2,6 +2,7 @@
 //! the maps from source bytes to rendered text ([`super::map`]) beside them.
 
 use super::*;
+use super::limits::{MAX_BLOCKS, MAX_COLUMNS, MAX_DEPTH};
 
 pub(super) struct Builder {
     /// Open containers: (kind, blocks so far, maps so far).
@@ -22,6 +23,11 @@ pub(super) struct Builder {
     /// Each open image's source and title, beside `image_starts`.
     image_dests: Vec<(String, String)>,
     tail: Tail,
+    /// Quotes, lists and items open past [`MAX_DEPTH`], which add their blocks to the
+    /// container they are in.
+    flat: usize,
+    /// Blocks, list items and table rows so far, against [`MAX_BLOCKS`].
+    spent: usize,
 }
 
 /// What the source ends inside, from the last block-level start the walk met.
@@ -49,13 +55,14 @@ pub(super) enum Scope {
 pub(super) type ParsedDoc = (Vec<Block>, Vec<Source>, Vec<Option<(bool, usize)>>, Vec<Cut>, Vec<usize>, Vec<BlockMap>);
 
 /// Where a top-level block starts: the start of its first line, and how many top-level blocks,
-/// [`Source`]s and list items come before it.
+/// [`Source`]s, list items and blocks counted against [`MAX_BLOCKS`] come before it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Cut {
     pub(super) at: usize,
     pub(super) blocks: usize,
     pub(super) sources: usize,
     pub(super) tasks: usize,
+    pub(super) spent: usize,
 }
 
 /// What colours a [`Block::Code`] and which lines of a [`Block::Mermaid`] draw, one per block in
@@ -112,6 +119,7 @@ impl Builder {
         if self.stack.len() == 1 {
             self.block_starts.push(self.root_start);
         }
+        self.spent += 1;
         let top = self.stack.last_mut().unwrap();
         top.1.push(b);
         top.2.push(map);
@@ -170,8 +178,10 @@ impl Builder {
             self.image_ranges.clear();
             self.image_starts.clear();
             if let InlineKind::Cell = kind {
-                // Empty cells still hold their column.
-                if let Some((Container::Table(_, cells, _, _, cell_maps), _, _)) = self.stack.last_mut() {
+                // Empty cells still hold their column; cells past the cap are dropped.
+                if let Some((Container::Table(_, cells, _, _, cell_maps), _, _)) = self.stack.last_mut()
+                    && cells.len() < MAX_COLUMNS
+                {
                     cells.push(inl);
                     cell_maps.push(map);
                 }
@@ -248,6 +258,24 @@ impl Builder {
         self.push(Block::Image { src, alt, title }, BlockMap::Inline(alt_map));
         self.inline = Some((InlineKind::Para, Inline::default(), Vec::new(), SpanMap::default()));
         true
+    }
+
+    /// Quotes and lists open.
+    fn depth(&self) -> usize {
+        self.stack.iter().filter(|(c, _, _)| matches!(c, Container::Quote | Container::List(..))).count()
+    }
+
+    /// Past [`MAX_BLOCKS`]: closes what is open and keeps the rest of `src`, from the start of
+    /// the line at `from`, as one paragraph of its text as written.
+    fn rest_as_text(&mut self, src: &str, from: usize) {
+        while self.stack.len() > 1 {
+            self.pop_container();
+        }
+        self.flush_inline();
+        let at = src[..from].rfind('\n').map_or(0, |i| i + 1);
+        let (text, map) = as_written(src[at..].trim_end(), at);
+        (self.root_start, self.last_root_para, self.tail) = (at, None, Tail::Code);
+        self.push(Block::Para(text), BlockMap::Inline(map));
     }
 
     fn table(&mut self) -> Option<(&mut Table, &mut Vec<Inline>, &mut Vec<SpanMap>, &mut Vec<Vec<SpanMap>>, &mut Vec<SpanMap>)> {
@@ -365,6 +393,8 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
         image_ranges: Vec::new(),
         image_dests: Vec::new(),
         tail: Tail::None,
+        flat: 0,
+        spent: 0,
     };
     let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let mut events = super::interrupt::list_interrupts(src, Parser::new_ext(src, opts).into_offset_iter());
@@ -375,12 +405,16 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                 Tag::Paragraph | Tag::Heading { .. } | Tag::CodeBlock(_) | Tag::BlockQuote(_) | Tag::List(_) | Tag::Table(_) | Tag::HtmlBlock
             ) | Event::Rule
         );
+        if b.spent >= MAX_BLOCKS && (starts_block || matches!(ev, Event::Start(Tag::Item | Tag::TableRow))) {
+            b.rest_as_text(src, range.start);
+            break;
+        }
         if starts_block && b.stack.len() == 1 && b.code.is_none() {
             b.flush_inline();
             let at = src[..range.start].rfind('\n').map_or(0, |i| i + 1);
             b.root_start = at;
             if !events.made() {
-                b.cuts.push(Cut { at, blocks: b.stack[0].1.len(), sources: b.sources.len(), tasks: b.tasks.len() });
+                b.cuts.push(Cut { at, blocks: b.stack[0].1.len(), sources: b.sources.len(), tasks: b.tasks.len(), spent: b.spent });
             }
         }
         b.tail = match &ev {
@@ -427,6 +461,16 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                     };
                     b.code = Some((String::new(), fence, SpanMap::default()));
                 }
+                // Past the depth cap a quote or list, and every container in it, adds its blocks to
+                // the container it is in.
+                Tag::BlockQuote(_) | Tag::List(_) if b.flat > 0 || b.depth() >= MAX_DEPTH => {
+                    b.flush_inline();
+                    b.flat += 1;
+                }
+                Tag::Item if b.flat > 0 => {
+                    b.flush_inline();
+                    b.flat += 1;
+                }
                 Tag::BlockQuote(_) => {
                     b.flush_inline();
                     b.stack.push((Container::Quote, Vec::new(), Vec::new()));
@@ -439,12 +483,14 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                     b.flush_inline();
                     let idx = b.tasks.len();
                     b.tasks.push(None);
+                    b.spent += 1;
                     b.stack.push((Container::Item(idx), Vec::new(), Vec::new()));
                 }
                 Tag::Table(aligns) => {
                     b.flush_inline();
                     let align = aligns
                         .iter()
+                        .take(MAX_COLUMNS)
                         .map(|a| match a {
                             Alignment::Center => Align::Center,
                             Alignment::Right => Align::End,
@@ -458,6 +504,7 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                     ));
                 }
                 Tag::TableHead | Tag::TableRow => {
+                    b.spent += usize::from(matches!(tag, Tag::TableRow));
                     // A row is still arriving while its line has no newline yet.
                     let open = !src[range.start..].contains('\n');
                     if let Some((t, _, _, _, _)) = b.table() {
@@ -500,13 +547,18 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                         rows.push(std::mem::take(cell_maps));
                     }
                 }
+                TagEnd::BlockQuote(_) | TagEnd::Item | TagEnd::List(_) if b.flat > 0 => {
+                    b.flush_inline();
+                    b.flat -= 1;
+                }
                 TagEnd::BlockQuote(_) | TagEnd::Item | TagEnd::List(_) | TagEnd::Table => b.pop_container(),
                 TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough | TagEnd::Link => close(&mut b),
                 TagEnd::Image => {
                     if let Some(start) = b.image_starts.pop() {
                         let end = b.inline().1.text.len();
                         let (src, title) = b.image_dests.pop().unwrap_or_default();
-                        if !b.lift_image(start, end, src, title) {
+                        // Past the block cap an image stays in its line as its alt text.
+                        if b.spent >= MAX_BLOCKS || !b.lift_image(start, end, src, title) {
                             b.image_ranges.push((start, end));
                         }
                     }
@@ -554,6 +606,13 @@ pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
                 let start = inl.1.text.len();
                 inl.1.text.push('\n');
                 inl.3.push(range, start..inl.1.text.len());
+            }
+            // A task past the depth cap keeps its box as text.
+            Event::TaskListMarker(checked) if b.flat > 0 => {
+                let inl = b.inline();
+                let start = inl.1.text.len();
+                inl.1.text.push_str(if checked { "[x] " } else { "[ ] " });
+                inl.3.push(range, start..start + 3);
             }
             Event::TaskListMarker(checked) => {
                 if let Some(idx) = b.stack.iter().rev().find_map(|(c, _, _)| match c {
@@ -620,10 +679,11 @@ fn pending_table(src: &str, base_offset: usize, autolink: bool) -> Option<(Table
     if lines.next().is_some() || !head.starts_with('|') {
         return None;
     }
-    let cells = split_row(head, base_offset + lead_ws);
+    let mut cells = split_row(head, base_offset + lead_ws);
     if cells.len() < 2 || delim.is_some_and(|d| !d.starts_with('|') || !d.chars().all(|c| "|:- ".contains(c))) {
         return None;
     }
+    cells.truncate(MAX_COLUMNS);
     let mut align = vec![Align::Start; cells.len()];
     if let Some(d) = delim {
         for (a, (_, spec)) in align.iter_mut().zip(split_row(d, 0)) {
@@ -682,12 +742,15 @@ fn inline_of(src: &str, offset: usize, autolink: bool) -> (Inline, SpanMap) {
             m.shift_src(offset);
             (i, m)
         }
-        _ => {
-            let mut m = SpanMap::default();
-            m.push(offset..offset + src.len(), 0..src.len());
-            (Inline { text: src.to_owned(), ..Inline::default() }, m)
-        }
+        _ => as_written(src, offset),
     }
+}
+
+/// `src` as plain text, from source byte `offset`.
+fn as_written(src: &str, offset: usize) -> (Inline, SpanMap) {
+    let mut m = SpanMap::default();
+    m.push(offset..offset + src.len(), 0..src.len());
+    (Inline { text: src.to_owned(), ..Inline::default() }, m)
 }
 
 pub(super) fn open(b: &mut Builder, style: Style, url: Option<String>) {

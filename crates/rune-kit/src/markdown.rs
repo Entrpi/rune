@@ -38,6 +38,12 @@
 //! source), then each new node fades and grows in, each edge draws on from its source to its
 //! target, and what's there glides to its new place; the closing fence changes nothing. Off, a
 //! diagram shows whole the frame it mounts.
+//!
+//! **Limits.** A source from a broken or hostile model can't overflow the stack or grow the
+//! parse without bound: quotes and lists nest at most 32 deep, a table keeps its first 128
+//! columns, and a document builds at most 100,000 blocks, list items and table rows, whole or
+//! streaming alike. Deeper nesting and the rest of a long document keep their text (the kit
+//! README's Markdown section says how).
 
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
@@ -55,6 +61,7 @@ mod find;
 mod highlight;
 mod image;
 mod interrupt;
+mod limits;
 mod link_icon;
 mod links;
 mod map;

@@ -1,6 +1,7 @@
 //! Parsed documents kept across commits, and growing a stream's parse from its last block.
 
 use super::*;
+use super::limits::{MAX_BLOCKS, spent};
 
 /// Estimated bytes of parsed documents kept beyond those on screen (see [`budget`]).
 const CACHE_BYTES: usize = 16 << 20;
@@ -95,6 +96,10 @@ fn extend(base: &Parsed, base_len: usize, src: &str, parse: fn(&str, bool) -> Pa
     #[cfg(test)]
     PARSES.with(|p| p.set((p.get().0, p.get().1 + 1)));
     let (tail, sources, tasks, cuts, starts, maps) = parse(&src[cut.at..], true);
+    // The tail's parse counts its blocks from none: near the cap, only a whole parse counts right.
+    if cut.spent + spent(&tail) >= MAX_BLOCKS {
+        return None;
+    }
     let mut blocks = base.doc.0[..cut.blocks].to_vec();
     blocks.extend(tail);
     let sources: Rc<[Source]> = base.doc.1[..cut.sources].iter().cloned().chain(sources).collect();
@@ -111,6 +116,7 @@ fn extend(base: &Parsed, base_len: usize, src: &str, parse: fn(&str, bool) -> Pa
             blocks: c.blocks + cut.blocks,
             sources: c.sources + cut.sources,
             tasks: c.tasks + cut.tasks,
+            spent: c.spent + cut.spent,
         }))
         .collect();
     Some(Parsed { doc: (Rc::new(blocks), sources, tasks, starts, maps), cuts })

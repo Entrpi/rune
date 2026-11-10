@@ -342,6 +342,14 @@ source each time, and earlier blocks stay mounted.
   text in source UTF-8 byte ranges across inline markers, tables and code blocks without
   reshaping text (`Highlight::new()` and `Highlight::current()`, scrolled to with
   `Tx::scroll_into_view` by `Markdown::highlight_key(index)` or `.key(..)`).
+- **Hostile input stays bounded.** A source may come from a broken or hostile model, so the
+  parse caps what it builds, the same whole or streaming: quotes and lists nest at most 32
+  deep (one opened deeper adds its blocks, text and all, to the 32nd); a table has at most 128
+  columns (a row's cells past the 128th are dropped, as GFM drops a row's cells past its
+  header's); and once a document has built 100,000 blocks, list items and table rows, the rest
+  of its source is one paragraph of its text as written, and an image that would stand as a
+  block of its own stays in its line as its alt text. The kit's largest test document has
+  28,832 and its widest table 10 columns.
 
 `Tooltip::label(..).render(&TooltipStyle::neutral(dark), &mut layer)` builds a tooltip without
 a kit. `TooltipStyle::max_width(w)` caps its width; `label`, `text` and a `.wrap()` text `child` wrap at it. The
