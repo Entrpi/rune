@@ -31,8 +31,16 @@ mod launch_drawables;
 use launch_drawables::LaunchDrawables;
 mod chrome;
 use chrome::{frame_chrome, place_chrome, sync_chrome, titlebar_double_click};
-mod configure;
-pub(crate) use configure::configure;
+pub(crate) mod configure;
+pub(crate) use configure::{configure, drawable_size};
+#[cfg(test)]
+pub(crate) use configure::refusals;
+#[cfg(test)]
+mod configure_tests;
+mod configured;
+pub(crate) use configured::{Configured, SurfaceEffect, SurfaceEvent};
+#[cfg(test)]
+pub(crate) use configured::{REFUSED_ATTEMPTS, REFUSED_RETRY, Refused, SurfaceState};
 mod create;
 mod native;
 use native::Native;
@@ -644,11 +652,12 @@ fn drain_frame(launcher: bool, visible: bool, was_shown: bool, changed: bool, qu
     !quiet && if launcher { changed || was_shown && visible } else { visible }
 }
 
-/// A vsynced sRGB (or non-sRGB when `srgb_blend` is set) configuration for the surface, and the
-/// first alpha mode it supports that composites translucent pixels.
+/// A vsynced sRGB (or non-sRGB when `srgb_blend` is set) configuration for the surface, no larger
+/// than the adapter's textures (`drawable_size`), and the first alpha mode it supports that composites translucent pixels.
 pub(crate) fn surface_config(surface: &wgpu::Surface, adapter: &wgpu::Adapter, (width, height): (u32, u32), srgb_blend: bool)
     -> Option<(wgpu::SurfaceConfiguration, Option<wgpu::CompositeAlphaMode>)> {
-    let mut config = surface.get_default_config(adapter, width.max(1), height.max(1))?;
+    let max = adapter.limits().max_texture_dimension_2d.max(1);
+    let mut config = surface.get_default_config(adapter, width.clamp(1, max), height.clamp(1, max))?;
     let caps = surface.get_capabilities(adapter);
     let srgb = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(config.format);
     config.format = if srgb_blend {

@@ -10,6 +10,10 @@ use crate::render::{Gpu, Renderer};
 use crate::runtime::{Env, Runtime, Waker};
 use crate::time::Instant;
 use crate::tooling::{AppSpec, runtime_for};
+use crate::window::{Configured, SurfaceEffect, SurfaceEvent};
+
+/// What a report calls the host's surface.
+const WHAT: &str = "an embedded view";
 
 static SHARED_GPU: OnceLock<Result<Arc<Gpu>, String>> = OnceLock::new();
 
@@ -53,6 +57,8 @@ pub struct LayerHost<S: 'static> {
     gpu: Arc<Gpu>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    /// Whether `surface` took `config`: a refused one gives no drawable until it does.
+    configured: Configured,
     renderer: Renderer,
     compositor: Option<Box<dyn Compositor<S>>>,
     rt: Runtime<S>,
@@ -92,7 +98,13 @@ impl<S: 'static> LayerHost<S> {
         let srgb_blend = true;
         let (config, _) = crate::window::surface_config(&surface, &gpu.adapter, (px_w, px_h), srgb_blend)
             .ok_or_else(|| "CAMetalLayer has no supported wgpu surface configuration".to_owned())?;
-        surface.configure(&gpu.device, &config);
+        // A layer that refuses it draws nothing until a resize or retry takes one.
+        let mut configured = Configured::default();
+        let attempt = configured.begin();
+        let result = crate::window::configure(&surface, &gpu, &config);
+        for effect in configured.answer(attempt, &result, Instant::now()) {
+            if let SurfaceEffect::Report(report) = effect { eprintln!("rune: {}", report.say(WHAT, result.as_ref().err().map(String::as_str))); }
+        }
         let target_format = config.format.remove_srgb_suffix();
         let mut renderer = Renderer::new(&gpu.device, target_format);
         renderer.set_srgb_blend(true);
@@ -110,6 +122,7 @@ impl<S: 'static> LayerHost<S> {
             gpu,
             surface,
             config,
+            configured,
             renderer,
             compositor: None,
             rt,
@@ -135,21 +148,23 @@ impl<S: 'static> LayerHost<S> {
     }
 
     /// Updates the viewport in points and display scale, reconfiguring the Metal swapchain only
-    /// when its clamped device-pixel dimensions change.
+    /// when its clamped device-pixel dimensions change, or when it has no usable configuration.
+    /// A zero viewport suspends it, and with it any retry of its configuration.
     pub fn resize(&mut self, viewport: (f32, f32), scale: f32) {
         if viewport.0 <= 0.0 || viewport.1 <= 0.0 {
             self.suspended = true;
+            self.surface_step(SurfaceEvent::Suspend, None);
             return;
         }
-        self.suspended = false;
+        if std::mem::replace(&mut self.suspended, false) { self.surface_step(SurfaceEvent::Resume { now: Instant::now() }, None); }
         let scale = scale.max(1.0);
         let max_dim = self.gpu.device.limits().max_texture_dimension_2d.max(1);
         let px_w = ((viewport.0 * scale).round() as u32).clamp(1, max_dim);
         let px_h = ((viewport.1 * scale).round() as u32).clamp(1, max_dim);
-        if self.config.width != px_w || self.config.height != px_h {
+        if self.config.width != px_w || self.config.height != px_h || !self.configured.drawable() {
             self.config.width = px_w;
             self.config.height = px_h;
-            self.surface.configure(&self.gpu.device, &self.config);
+            self.reconfigure();
         }
         self.rt.set_viewport((px_w as f32 / scale, px_h as f32 / scale), scale);
     }
@@ -169,14 +184,17 @@ impl<S: 'static> LayerHost<S> {
         self.rt.refuse_file_dialog("native file dialogs are unsupported in embedded views");
 
         let comp_animating = self.compositor.as_ref().is_some_and(|c| c.animating());
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.gpu.device, &self.config);
-                return EmbedFrame { animating: true, ..EmbedFrame::default() };
-            }
-            _ => return EmbedFrame { animating: animating || comp_animating, ..EmbedFrame::default() },
+        // wgpu panics on a drawable from a refused surface: wait for the retry instead, and
+        // after the last one for a resize.
+        self.surface_step(SurfaceEvent::Tick { now: t0 }, None);
+        let frame = match self.configured.drawable().then(|| self.surface.get_current_texture()) {
+            Some(wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f)) => Some(f),
+            Some(wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost) => self.reacquire(t0),
+            Some(_) => return EmbedFrame { animating: animating || comp_animating, ..EmbedFrame::default() },
+            None => None,
         };
+        let Some(frame) = frame else { return EmbedFrame { wake_after_secs: self.wake_after(t0), ..EmbedFrame::default() } };
+        self.surface_step(SurfaceEvent::Drew, None);
 
         let target = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.renderer.format()),
@@ -214,10 +232,7 @@ impl<S: 'static> LayerHost<S> {
         self.gpu.queue.present(frame);
 
         let cpu_us = t0.elapsed().as_micros() as u64;
-        let wake_after_secs = self.rt.wake_deadline().and_then(|d| {
-            let elapsed = self.rt.wall_start?.elapsed().as_secs_f64();
-            Some((d - elapsed).max(0.0))
-        });
+        let wake_after_secs = self.wake_after(t0);
         let comp_animating = self.compositor.as_ref().is_some_and(|c| c.animating());
         let keep_ticking = animating || comp_animating || self.rt.has_pending_input() || self.rt.live_pending();
         EmbedFrame {
@@ -227,59 +242,54 @@ impl<S: 'static> LayerHost<S> {
             cpu_us,
         }
     }
-}
 
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    use objc2_video::{
-        msg_send,
-        rc::Retained,
-        runtime::{AnyClass, AnyObject},
-    };
-
-    use super::LayerHost;
-    use crate::compose::{Compositor, Frame};
-    use crate::render::KIND_EFFECT;
-    use crate::tooling::AppSpec;
-    use crate::{Cx, El, col, effect};
-
-    struct MarkProbe(Arc<AtomicU32>);
-
-    impl Compositor<()> for MarkProbe {
-        fn render(&mut self, f: &mut Frame<'_, ()>) {
-            for (idx, inst) in f.rt.instances.iter().enumerate() {
-                if inst.params[1] == KIND_EFFECT {
-                    self.0.store(f.rt.marks.get(idx).copied().unwrap_or(0), Ordering::Relaxed);
-                }
+    /// A lost or outdated surface, configured again and asked once more. One that still gives
+    /// no drawable counts toward its run of failures, as a refusal does.
+    fn reacquire(&mut self, now: Instant) -> Option<wgpu::SurfaceTexture> {
+        if !self.reconfigure() { return None; }
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => Some(f),
+            _ => {
+                self.surface_step(SurfaceEvent::Lost { now }, None);
+                None
             }
-            f.draw_ui();
         }
     }
 
-    #[test]
-    fn layer_host_runs_compositor_with_tracked_marks() {
-        let layer: Retained<AnyObject> = unsafe { msg_send![AnyClass::get(c"CAMetalLayer").expect("QuartzCore"), new] };
-        let seen = Arc::new(AtomicU32::new(0));
-        let view = |_: &(), _: &mut Cx<()>| -> El { col().size(120.0, 80.0).child(effect(42).size(60.0, 20.0)) };
-        let spec = AppSpec::new("embed-test", (120.0, 80.0), || (), view);
-        let host = unsafe {
-            LayerHost::from_core_animation_layer(
-                Retained::as_ptr(&layer) as *mut std::ffi::c_void,
-                &spec,
-                (),
-                (120.0, 80.0),
-                2.0,
-                true,
-                Arc::new(|| {}),
-            )
-        };
-        let Ok(mut host) = host else { return };
-        host = host.with_compositor(MarkProbe(seen.clone()));
-        let out = host.frame();
-        assert!(out.drew);
-        assert_eq!(seen.load(Ordering::Relaxed), 42);
+    /// Configures the surface again at `config`; false when it refused.
+    fn reconfigure(&mut self) -> bool {
+        let attempt = self.configured.begin();
+        let result = crate::window::configure(&self.surface, &self.gpu, &self.config);
+        let effects = self.configured.answer(attempt, &result, Instant::now());
+        self.carry(effects, result.as_ref().err().map(String::as_str));
+        result.is_ok()
+    }
+
+    fn surface_step(&mut self, event: SurfaceEvent, error: Option<&str>) {
+        let effects = self.configured.step(event);
+        self.carry(effects, error);
+    }
+
+    /// Carries out the surface state's `effects`; a report names `error` when there is one. A
+    /// retry needs no wake here: `frame` returns it in `wake_after_secs`.
+    fn carry(&mut self, effects: crate::machine::Effects<SurfaceEffect>, error: Option<&str>) {
+        for effect in effects {
+            match effect {
+                SurfaceEffect::Configure => { self.reconfigure(); }
+                SurfaceEffect::WakeAt(_) => {}
+                SurfaceEffect::Report(report) => eprintln!("rune: {}", report.say(WHAT, error)),
+            }
+        }
+    }
+
+    /// Seconds until the next timer, or until a refused surface tries again.
+    fn wake_after(&self, now: Instant) -> Option<f64> {
+        let timer = self.rt.wake_deadline().and_then(|d| Some((d - self.rt.wall_start?.elapsed().as_secs_f64()).max(0.0)));
+        let retry = self.configured.retry().map(|at| at.saturating_duration_since(now).as_secs_f64());
+        timer.into_iter().chain(retry).reduce(f64::min)
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "embed_tests.rs"]
+mod tests;

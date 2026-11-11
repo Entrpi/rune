@@ -6,6 +6,7 @@ use winit::{application::ApplicationHandler, event::WindowEvent, event_loop::{Ac
     platform::web::{EventLoopExtWebSys, WindowAttributesExtWebSys, WindowExtWebSys}, window::{Window, WindowId}};
 use crate::{App, Runtime, Env, render::{Gpu, Renderer}, time::Instant};
 use super::web_math;
+use crate::window::{Configured, SurfaceEffect, SurfaceEvent};
 
 /// The overscan a page's canvas carries above and below the window, in CSS points: the distance
 /// the browser's compositor can scroll before Rune has to draw a new band.
@@ -103,6 +104,8 @@ struct Running<S: 'static> {
     gpu: Gpu,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    /// Whether `surface` has a usable configuration, and the browser's late answers.
+    canvas: Canvas,
     renderer: Renderer,
     rt: Runtime<S>,
     shared: Arc<crate::app::Shared<S>>,
@@ -141,16 +144,57 @@ impl<S: 'static> Running<S> {
             self.rt.set_band(band, view);
         }
         let size = window.canvas().map_or(size, |c| canvas_physical(&c, size, scale));
-        self.suspended = size.width == 0 || size.height == 0;
-        if self.suspended { return; }
+        // A canvas that draws nothing holds any retry of its configuration until it draws again.
+        let suspended = size.width == 0 || size.height == 0;
+        if std::mem::replace(&mut self.suspended, suspended) != suspended {
+            self.surface_step(if suspended { SurfaceEvent::Suspend } else { SurfaceEvent::Resume { now: Instant::now() } }, None);
+        }
+        if suspended { return; }
         let next = (size.width.min(max_dim), size.height.min(max_dim));
         let (kept, reconfigure) = web_math::should_reconfigure_surface((self.config.width, self.config.height), next, self.document);
-        if reconfigure {
+        if reconfigure || !self.canvas.configured.drawable() {
             self.config.width = kept.0;
             self.config.height = kept.1;
-            self.surface.configure(&self.gpu.device, &self.config);
+            self.reconfigure();
         }
         self.rt.set_viewport((next.0 as f32 / scale, next.1 as f32 / scale), scale);
+    }
+
+    /// Configures the surface again at `config`. WebGPU's answer comes later, carrying its
+    /// attempt, so an answer to an earlier configure changes nothing; the canvas draws meanwhile,
+    /// and a refusal asks for the frame that reads it.
+    fn reconfigure(&mut self) {
+        let attempt = self.canvas.configured.begin();
+        let (answers, wake) = (self.canvas.answers.clone(), self.canvas.wake.clone());
+        let answered = crate::window::configure::configure_then(&self.surface, &self.gpu, &self.config, move |result| {
+            let refused = result.is_err();
+            answers.borrow_mut().push((attempt, result));
+            if refused { wake(); }
+        });
+        if let Some(result) = answered { self.answer(attempt, result); }
+    }
+
+    /// `result` answers configure `attempt`.
+    fn answer(&mut self, attempt: crate::machine::Attempt, result: Result<(), String>) {
+        let effects = self.canvas.configured.answer(attempt, &result, Instant::now());
+        self.carry(effects, result.err().as_deref());
+    }
+
+    fn surface_step(&mut self, event: SurfaceEvent, error: Option<&str>) {
+        let effects = self.canvas.configured.step(event);
+        self.carry(effects, error);
+    }
+
+    /// Carries out the canvas state's `effects`; a report names `error` when there is one. A
+    /// retry needs no wake here: `about_to_wait` waits for it.
+    fn carry(&mut self, effects: crate::machine::Effects<SurfaceEffect>, error: Option<&str>) {
+        for effect in effects {
+            match effect {
+                SurfaceEffect::Configure => self.reconfigure(),
+                SurfaceEffect::WakeAt(_) => {}
+                SurfaceEffect::Report(report) => web_sys::console::warn_1(&format!("rune: {}", report.say("the canvas", error)).into()),
+            }
+        }
     }
 
     /// Puts a page's canvas where the band it just drew starts in the document. The browser's
@@ -196,6 +240,15 @@ fn band_css(window: &Window, scale: f32, max_dim: u32) -> (f32, f32) {
     let max = max_dim as f32 / scale;
     let band = (view + 2.0 * SKIRT).min(max.max(view));
     (view, band)
+}
+
+/// The canvas's configuration as the browser answers it.
+struct Canvas {
+    configured: Configured,
+    /// Answers that came after their configure returned, each with its attempt.
+    answers: Rc<RefCell<Vec<(crate::machine::Attempt, Result<(), String>)>>>,
+    /// Asks for a frame, so a late refusal is read while the app idles.
+    wake: crate::Waker,
 }
 
 /// The canvas's CSS height is its band, in points.
@@ -463,6 +516,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             rt.record_events = false;
             let menus = crate::native_menu::Guard::attach(&shared, false);
             let shortcuts = crate::shortcuts::Guard::attach(&shared, wake.clone(), false, false);
+            let canvas = Canvas { configured: Configured::default(), answers: Rc::default(), wake: wake.clone() };
             let mut clipboard = crate::clipboard::Client::default();
             clipboard.connect(wake);
             shared.visible.store(true, Ordering::Release);
@@ -481,7 +535,6 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             } else {
                 config.format
             };
-            surface.configure(&gpu.device, &config);
             let (lost, proxy) = (self.lost.clone(), self.proxy.clone());
             health::watch(&gpu.device, move |why| {
                 *lost.borrow_mut() = Some(why);
@@ -493,10 +546,12 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             let cursor = crate::cursor::os::OsCursor::new(event_loop);
             let input = input::Bridge::new(&window.canvas().unwrap(), Rc::downgrade(&self.running), window.clone(),
                 input::Mode { embedded: self.embedded, fit_height, document });
-            *self.running.borrow_mut() = Some(Running { gpu, surface, config, renderer, rt, shared, input, clipboard,
+            let mut running = Running { gpu, surface, config, canvas, renderer, rt, shared, input, clipboard,
                 clock: crate::frame::clock::FrameClock::new(now), compositor, suspended: false, embedded: self.embedded,
                 document, presented: false, band: None,
-                cursor, _menus: menus, shortcuts });
+                cursor, _menus: menus, shortcuts };
+            running.reconfigure();
+            *self.running.borrow_mut() = Some(running);
         }
         if let Some(r) = &mut *self.running.borrow_mut() {
             r.shortcuts.drain();
@@ -549,14 +604,27 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
                     let format = if r.rt.srgb_blend() { r.config.format.remove_srgb_suffix() } else { r.config.format.add_srgb_suffix() };
                     if format != r.config.format && !r.config.view_formats.contains(&format) {
                         r.config.view_formats.push(format);
-                        r.surface.configure(&r.gpu.device, &r.config);
+                        r.reconfigure();
                     }
                     crate::window::rebuild_renderer(&r.gpu.device, &mut r.renderer, format, &mut r.rt);
                 }
-                let frame = match r.surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+                // The browser's answers to earlier configures, then a retry that is due. A canvas
+                // without a usable configuration draws nothing and waits for its retry
+                // (`about_to_wait`); once the retries run out, for a resize (`resize_surface`).
+                let answers = std::mem::take(&mut *r.canvas.answers.borrow_mut());
+                for (attempt, result) in answers { r.answer(attempt, result); }
+                r.surface_step(SurfaceEvent::Tick { now }, None);
+                let frame = match r.canvas.configured.drawable().then(|| r.surface.get_current_texture()) {
+                    Some(wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) => frame,
+                    // What a browser that rejects the configuration gives (wgpu's WebGPU backend).
+                    Some(wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated) => {
+                        r.surface_step(SurfaceEvent::Lost { now }, Some("the canvas has no drawable"));
+                        return;
+                    }
+                    None => return,
                     _ => { error("WebGPU canvas acquisition failed", window.canvas().as_ref(), r.embedded, r.document); self.end(event_loop); return; }
                 };
+                r.surface_step(SurfaceEvent::Drew, None);
                 let target = frame.texture.create_view(&wgpu::TextureViewDescriptor {
                     format: Some(r.renderer.format()), ..Default::default()
                 });
@@ -600,13 +668,19 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
         crate::cursor::os::make_pending(event_loop);
         let Ok(running) = self.running.try_borrow() else { return };
         let Some(r) = &*running else { return };
-        event_loop.set_control_flow(match r.rt.wake_deadline() {
+        let flow = match r.rt.wake_deadline() {
             Some(deadline) if deadline <= r.rt.wall_start.unwrap().elapsed().as_secs_f64() => {
                 if let Some(window) = &self.window { window.request_redraw(); }
                 ControlFlow::Wait
             }
             Some(deadline) => ControlFlow::WaitUntil(crate::time::for_winit(r.rt.wall_start.unwrap() + Duration::from_secs_f64(deadline.max(0.0)))),
             None => ControlFlow::Wait,
+        };
+        // A refused canvas tries again at its retry, which `new_events` redraws for.
+        event_loop.set_control_flow(match (flow, r.canvas.configured.retry().map(crate::time::for_winit)) {
+            (ControlFlow::WaitUntil(at), Some(retry)) => ControlFlow::WaitUntil(at.min(retry)),
+            (_, Some(retry)) => ControlFlow::WaitUntil(retry),
+            (flow, None) => flow,
         });
     }
 

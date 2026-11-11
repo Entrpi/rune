@@ -39,7 +39,7 @@ fn an_occluded_surface_never_asks_wgpu_and_draws_once_visible() {
     let Some((config, _)) = surface_config(&surface, &gpu.adapter, (64, 64), false) else {
         return eprintln!("skipped: the adapter can't present to a Metal layer");
     };
-    surface.configure(&gpu.device, &config);
+    configure(&surface, &gpu, &config).expect("a 64x64 layer takes its configuration");
 
     OCCLUSION.store(0, Ordering::Relaxed);
     assert!(unsafe { crate::platform::macos::layer_occluded(&layer) });
@@ -105,7 +105,7 @@ fn a_presumed_shown_surface_gets_its_first_drawable_while_reported_covered() {
     let Some((config, _)) = surface_config(&surface, &gpu.adapter, (64, 64), false) else {
         return eprintln!("skipped: the adapter can't present to a Metal layer");
     };
-    surface.configure(&gpu.device, &config);
+    configure(&surface, &gpu, &config).expect("a 64x64 layer takes its configuration");
     let mut meter = SurfaceMeter::new("first", Arc::default());
     assert!(acquire(&surface, &gpu, &config, true, 1, &mut meter).is_err(), "a covered window gets no drawable");
 

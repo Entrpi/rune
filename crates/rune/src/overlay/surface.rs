@@ -163,8 +163,8 @@ impl<T: 'static> Overlay<T> {
             return;
         }
         live.scale = scale;
-        live.config.width = (self.at.size.0 * scale).round().max(1.0) as u32;
-        live.config.height = (self.at.size.1 * scale).round().max(1.0) as u32;
+        let size = ((self.at.size.0 * scale).round() as u32, (self.at.size.1 * scale).round() as u32);
+        (live.config.width, live.config.height) = crate::window::drawable_size(&gpu.device, size);
         live.settle();
         if let Err(error) = crate::window::configure(&live.surface, &gpu, &live.config) {
             self.surface_refused(format!("could not resize its GPU surface: {error}"));
