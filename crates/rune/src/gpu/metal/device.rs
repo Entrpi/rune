@@ -66,14 +66,10 @@ pub(super) fn new(device: Obj<dyn MTLDevice>, desc: &wgpu::DeviceDescriptor<'_>)
 }
 
 /// wgpu-hal's choice of MSL version for this macOS or iOS. Their numbers meet at 26; before, iOS
-/// 18 and 17 match macOS 15 and 14.
+/// 18 and 17 match macOS 15 and 14. An older OS gets 3.0, which it lacks; `backend::current`
+/// keeps the backend off it.
 pub(super) fn msl_version() -> ((u8, u8), MTLLanguageVersion) {
-    let mut buf = [0u8; 32];
-    let mut len = buf.len();
-    // SAFETY: sysctlbyname writes at most `len` bytes into `buf` and the length it wrote into `len`.
-    let ok = unsafe { libc::sysctlbyname(c"kern.osproductversion".as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } == 0;
-    let version = if ok { String::from_utf8_lossy(&buf[..len.saturating_sub(1)]).into_owned() } else { String::new() };
-    let major: u32 = version.split('.').next().and_then(|m| m.trim().parse().ok()).unwrap_or(0);
+    let major = crate::gpu::backend::os_major();
     #[cfg(not(target_os = "macos"))]
     let major = match major { 18 => 15, 17 => 14, 26.. => major, _ => 0 };
     match major {

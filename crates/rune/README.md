@@ -701,7 +701,9 @@ Staying fast afterwards is "Fast apps" (`site/src/FastApps.tsx`) and "Smooth scr
   it adds the feature). An app that opts out with `App::gpu_backend(GpuBackend::Wgpu)` calls
   `rune::prewarm_gpu_on(GpuBackend::Wgpu)` instead, which chooses the backend and then starts the thread, so it
   doesn't start on the native backend and start over when `App::gpu_backend` runs; that call afterwards changes
-  nothing. `RUNE_GPU_BACKEND=wgpu` or `=metal` overrides both without a rebuild. A compositor whose
+  nothing. `RUNE_GPU_BACKEND=wgpu` or `=metal` overrides both without a rebuild. Rune's Metal backend needs
+  macOS 13 (iOS 16), for MSL 3.0; wgpu's runs from macOS 11. Before macOS 13 the default is wgpu's, and asking for
+  the native backend (`App::gpu_backend` or `RUNE_GPU_BACKEND=metal`) draws with wgpu and says so once. A compositor whose
   `Compositor::features` asks for more than the native backend offers (`TIMESTAMP_QUERY` and `IMMEDIATES`) draws
   with wgpu instead, every frame: log
   `rune::describe_gpu(frame.device)` once to see which backend a window got and why, or set `RUNE_GPU_LOG=1`.

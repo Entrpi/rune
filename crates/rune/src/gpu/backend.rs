@@ -1,5 +1,5 @@
 //! Which backend an Apple app draws with: Rune's native Metal backend (`metal-backend`, on by
-//! default, and the default on macOS), or wgpu's.
+//! default, and the default on macOS 13 and later), or wgpu's.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 ///
 /// A Mac app that chooses neither draws with `Metal` when Rune's `metal-backend` feature is on (it
 /// is by default), and with `Wgpu` when it's off; an iOS app draws with `Wgpu`. `Default` stays `Wgpu`; passing it to
-/// `App::gpu_backend` opts out of the native backend.
+/// `App::gpu_backend` opts out of the native backend. The native backend needs macOS 13 or iOS 16:
+/// before them, `Metal` draws with wgpu.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GpuBackend {
     /// wgpu's Metal backend.
@@ -62,11 +63,45 @@ fn env() -> Option<String> {
     std::env::var("RUNE_GPU_BACKEND").ok()
 }
 
+/// The first OS version the native backend runs on: macOS 13 and iOS 16, which have MSL 3.0, the
+/// version it writes shaders in and its precompiled libraries are built for.
+const NATIVE_FLOOR: u32 = if cfg!(target_os = "ios") { 16 } else { 13 };
+
+/// The OS's major version (macOS 13 is 13), or 0 where it can't be read.
+#[cfg(target_vendor = "apple")]
+pub(crate) fn os_major() -> u32 {
+    static MAJOR: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MAJOR.get_or_init(|| {
+        let mut buf = [0u8; 32];
+        let mut len = buf.len();
+        // SAFETY: sysctlbyname writes at most `len` bytes into `buf` and the length it wrote into `len`.
+        let ok = unsafe { libc::sysctlbyname(c"kern.osproductversion".as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) } == 0;
+        let version = if ok { String::from_utf8_lossy(&buf[..len.saturating_sub(1)]).into_owned() } else { String::new() };
+        version.split('.').next().and_then(|m| m.trim().parse().ok()).unwrap_or(0)
+    })
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn os_major() -> u32 { 0 }
+
+/// How a log names the OS whose major version is `os`.
+fn os_name(os: u32) -> String {
+    let name = if cfg!(target_os = "ios") { "iOS" } else { "macOS" };
+    if os == 0 { format!("a {name} whose version Rune can't read") } else { format!("{name} {os}") }
+}
+
 #[cfg_attr(not(all(target_vendor = "apple", feature = "metal-backend")), allow(dead_code))]
 /// The backend GPUs are made with: `RUNE_GPU_BACKEND` (`wgpu` or `metal`) over the app's
-/// choice, over the default.
+/// choice, over the default, and wgpu's on an OS the native backend doesn't run on. Asked for
+/// there, it says so once.
 pub(crate) fn current() -> GpuBackend {
-    resolve(env().as_deref(), chosen())
+    let (env, chosen, os) = (env(), chosen(), os_major());
+    let backend = resolve(env.as_deref(), chosen, os);
+    if backend != resolve(env.as_deref(), chosen, u32::MAX) && !defaulted(env.as_deref(), chosen) {
+        static SAID: std::sync::Once = std::sync::Once::new();
+        SAID.call_once(|| eprintln!("rune: Rune's Metal backend needs {} or later, and this is {}; drawing with wgpu", os_name(NATIVE_FLOOR), os_name(os)));
+    }
+    backend
 }
 
 /// What `RUNE_GPU_LOG` calls the backend `adapter` is on.
@@ -138,18 +173,8 @@ pub fn describe(device: &wgpu::Device) -> String {
 fn reason(native: bool) -> String {
     #[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
     {
-        let (env, chosen) = (env(), chosen());
         let missing = *MISSING.lock().unwrap_or_else(|e| e.into_inner());
-        return match (native, env.as_deref(), chosen) {
-            (true, Some("metal"), _) => "RUNE_GPU_BACKEND=metal".into(),
-            (true, _, Some(GpuBackend::Metal)) => "App::gpu_backend chose it".into(),
-            (true, ..) => "the default".into(),
-            (false, Some("wgpu"), _) => "RUNE_GPU_BACKEND=wgpu".into(),
-            (false, _, Some(GpuBackend::Wgpu)) => "App::gpu_backend chose it".into(),
-            (false, ..) if DEFAULT == GpuBackend::Wgpu => "the default here".into(),
-            (false, ..) if !missing.is_empty() => format!("a compositor wants {missing}, which Rune's Metal backend lacks"),
-            (false, ..) => String::new(),
-        };
+        return why(native, env().as_deref(), chosen(), missing, os_major());
     }
     #[cfg(all(target_vendor = "apple", not(feature = "metal-backend")))]
     return if native { String::new() } else { "Rune's metal-backend feature is off".into() };
@@ -157,6 +182,26 @@ fn reason(native: bool) -> String {
     {
         let _ = native;
         String::new()
+    }
+}
+
+/// `reason` for a backend chosen from `env`, the app's choice, the features a compositor wanted
+/// and the native backend lacks, and the OS's major version.
+#[cfg_attr(not(all(target_vendor = "apple", feature = "metal-backend")), allow(dead_code))]
+fn why(native: bool, env: Option<&str>, chosen: Option<GpuBackend>, missing: wgpu::Features, os: u32) -> String {
+    match (native, env, chosen) {
+        (true, Some("metal"), _) => "RUNE_GPU_BACKEND=metal".into(),
+        (true, _, Some(GpuBackend::Metal)) => "App::gpu_backend chose it".into(),
+        (true, ..) => "the default".into(),
+        // As `resolve` decides: the OS floor over whatever asked for the native backend, then
+        // the environment over the app.
+        (false, ..) if resolve(env, chosen, os) != resolve(env, chosen, u32::MAX) =>
+            format!("Rune's Metal backend needs {} or later, and this is {}", os_name(NATIVE_FLOOR), os_name(os)),
+        (false, Some("wgpu"), _) => "RUNE_GPU_BACKEND=wgpu".into(),
+        (false, env, Some(GpuBackend::Wgpu)) if !matches!(env, Some("metal" | "wgpu")) => "App::gpu_backend chose it".into(),
+        (false, ..) if DEFAULT == GpuBackend::Wgpu => "the default here".into(),
+        (false, ..) if !missing.is_empty() => format!("a compositor wants {missing}, which Rune's Metal backend lacks"),
+        (false, ..) => String::new(),
     }
 }
 
@@ -171,13 +216,16 @@ pub(crate) fn serves(device: &wgpu::Device, wanted: wgpu::Features) -> bool {
     true
 }
 
+/// The backend `env` (`RUNE_GPU_BACKEND`) asks for, over the app's choice, over the default:
+/// wgpu's on an OS whose major version `os` the native backend doesn't run on.
 #[cfg_attr(not(all(target_vendor = "apple", feature = "metal-backend")), allow(dead_code))]
-fn resolve(env: Option<&str>, chosen: Option<GpuBackend>) -> GpuBackend {
-    match env {
+fn resolve(env: Option<&str>, chosen: Option<GpuBackend>, os: u32) -> GpuBackend {
+    let backend = match env {
         Some("metal") => GpuBackend::Metal,
         Some("wgpu") => GpuBackend::Wgpu,
         _ => chosen.unwrap_or(DEFAULT),
-    }
+    };
+    if os < NATIVE_FLOOR { GpuBackend::Wgpu } else { backend }
 }
 
 /// Whether the backend is the default one, which neither the environment nor the app chose.
@@ -187,31 +235,5 @@ fn defaulted(env: Option<&str>, chosen: Option<GpuBackend>) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{DEFAULT, GpuBackend, defaulted, resolve};
-
-    #[test]
-    fn the_environment_overrides_the_app() {
-        assert_eq!(resolve(None, Some(GpuBackend::Metal)), GpuBackend::Metal);
-        assert_eq!(resolve(Some("wgpu"), Some(GpuBackend::Metal)), GpuBackend::Wgpu);
-        assert_eq!(resolve(Some("metal"), Some(GpuBackend::Wgpu)), GpuBackend::Metal);
-        assert_eq!(resolve(Some(""), Some(GpuBackend::Metal)), GpuBackend::Metal);
-    }
-
-    #[test]
-    fn an_app_that_chooses_wgpu_keeps_it_over_the_default() {
-        assert_eq!(resolve(None, Some(GpuBackend::Wgpu)), GpuBackend::Wgpu);
-        assert_eq!(resolve(None, None), DEFAULT);
-        assert_eq!(resolve(Some("bogus"), None), DEFAULT);
-        assert!(defaulted(None, None));
-        assert!(!defaulted(None, Some(GpuBackend::Metal)));
-        assert!(!defaulted(Some("metal"), None));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_draws_with_the_native_backend_by_default_with_the_feature() {
-        let expected = if cfg!(feature = "metal-backend") { GpuBackend::Metal } else { GpuBackend::Wgpu };
-        assert_eq!(DEFAULT, expected);
-    }
-}
+#[path = "backend_tests.rs"]
+mod tests;
