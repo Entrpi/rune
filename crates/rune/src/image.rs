@@ -677,6 +677,7 @@ mod avif;
 mod from_url;
 mod mips;
 pub(crate) mod pixels;
+pub(crate) use mips::halved;
 use mips::mip_chain;
 #[cfg(test)]
 use mips::byte;

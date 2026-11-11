@@ -447,3 +447,37 @@ fn interleaved_gpu_times(gpu: &Gpu, renderers: &[Renderer], target: &Offscreen) 
     }
     samples
 }
+
+/// On a GPU whose textures are at most 2048 pixels a side, a window-sized layer whose blur
+/// reaches past a 2048-pixel window (its support, bucketed, asks for 2112) draws within the
+/// limit, with no validation error, and keeps every pixel the window shows, out to its right
+/// and bottom edges. One far wider than the window, mostly off its left edge, keeps the window's
+/// part and spends the rest of the room on support around it.
+#[test]
+fn a_blurred_layer_past_the_gpus_textures_draws_the_part_that_shows() {
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::PRIMARY;
+    let instance = wgpu::Instance::new(descriptor);
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else { return eprintln!("skipped: no wgpu adapter") };
+    let required_limits = wgpu::Limits { max_texture_dimension_2d: 2048, ..adapter.limits() };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }))
+        .expect("a device limited to 2048 px textures");
+    let gpu = Gpu::from_device(instance, adapter, device, queue);
+    let mut atlas = crate::text::TextSystem::default().atlas;
+    let alpha = |out: &[u8], side: usize, x: usize, y: usize| f32::from(out[(y * side + x) * 4 + 3]) / 255.0;
+    for (side, bounds) in [(2048, [0.0, 0.0, 2048.0, 2048.0]), (1024, [-1500.0, -20.0, 2600.0, 1100.0])] {
+        let mut renderer = Renderer::new(&gpu.device, OFFSCREEN_FORMAT);
+        let target = Offscreen::new(&gpu.device, side as u32, side as u32);
+        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        renderer.prepare(&gpu.device, &gpu.queue, &mut atlas, &filtered(bounds, 1.0), (side as u32, side as u32));
+        let out = pixels(&gpu, &renderer, &target);
+        if let Some(error) = pollster::block_on(scope.pop()) { panic!("validation error: {error}"); }
+        let [x0, y0, w, h] = bounds.map(|v| v as i32);
+        // At least the blur's own coverage of the rect: past the texture it reads its edge.
+        let want = |x: usize, y: usize| coverage(x as i32, x0, x0 + w, 1.0) * coverage(y as i32, y0, y0 + h, 1.0) - 0.02;
+        let edge = side - 1;
+        for (x, y) in [(side / 2, side / 2), (edge, side / 2), (side / 2, edge), (edge, edge), (0, 0), (0, edge), (edge, 0)] {
+            assert!(alpha(&out, side, x, y) >= want(x, y), "{side}: alpha {} at {x},{y}, wanted {}", alpha(&out, side, x, y), want(x, y));
+        }
+    }
+}

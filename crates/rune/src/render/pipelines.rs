@@ -86,7 +86,7 @@ impl Renderer {
             backdrops: Vec::new(),
             backdrop_blur: None,
             breakers: Default::default(),
-            uploads: Default::default(),
+            uploads: super::upload::Uploads::new(device),
             device_key: crate::compose::DeviceKey::next(),
         }
     }

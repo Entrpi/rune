@@ -17,9 +17,13 @@ impl Renderer {
     /// Hands text's new outline records to the GPU, growing the texture first if they don't fit.
     pub(super) fn upload_outlines(&mut self, device: &wgpu::Device, staging: &Staging, atlas: &mut Atlas) {
         let store = &mut atlas.outlines;
+        // The store grows no taller than the device's textures.
+        let limit = device.limits().max_texture_dimension_2d;
+        store.set_max_rows(limit);
         let variant::Uber::Windfoil { outlines, .. } = &mut self.uber else { return };
-        if store.rows() > outlines.height() {
-            *outlines = Self::outline_texture(device, store.rows().next_power_of_two());
+        let rows = store.rows().min(limit);
+        if rows > outlines.height() {
+            *outlines = Self::outline_texture(device, rows.next_power_of_two().min(limit));
             store.invalidate();
             self.rebind_all(device);
         }

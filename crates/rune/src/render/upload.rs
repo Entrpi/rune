@@ -46,6 +46,13 @@ impl Default for Uploads {
 }
 
 impl Uploads {
+    /// A new renderer's uploads, on `device`. Image atlases that place images before their
+    /// renderer tells them learn its largest texture here (`image::pixels::note_device_side`).
+    pub(super) fn new(device: &wgpu::Device) -> Uploads {
+        crate::image::pixels::note_device_side(device.limits().max_texture_dimension_2d);
+        Uploads::default()
+    }
+
     /// Forgets what the instance buffer holds, so the next frame writes and batches it all.
     fn forget_instances(&mut self) {
         self.instances.clear();
@@ -125,8 +132,11 @@ impl Renderer {
     }
 
     /// Uploads changed rows of the runtime's image atlas (`El::pixels`), creating its texture on
-    /// first use.
+    /// first use. The atlas learns the device's largest texture here too, and a page larger
+    /// than that (placed before this process made any renderer) gets no texture.
     pub fn upload_images(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, images: &mut ImageAtlas) {
+        let max = device.limits().max_texture_dimension_2d;
+        images.set_max_side(max);
         if images.pages.is_empty() && self.images.is_empty() { return self.refresh_layer_bindings(device); }
         let staging = self.uploads.staging(device, queue);
         if staging.lost() != self.uploads.lost.1 {
@@ -136,7 +146,7 @@ impl Renderer {
         let mut changed = self.images.len() != images.pages.len();
         self.images.resize_with(images.pages.len(), || None);
         for (index, page) in images.pages.iter_mut().enumerate() {
-            if page.data.is_empty() { changed |= self.images[index].is_some(); self.images[index] = None; continue; }
+            if page.data.is_empty() || page.width > max || page.height > max { changed |= self.images[index].take().is_some(); continue; }
             if self.images[index].as_ref().is_none_or(|(t, _)| t.width() != page.width || t.height() != page.height) {
                 let texture = Self::image_texture(device, page.width, page.height);
                 let bind = Self::bind_group(device, &self.bind_layout, &self.globals, self.uber.outlines(), &self.atlas, &texture, None);

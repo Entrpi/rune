@@ -365,7 +365,8 @@ impl Renderer {
             self.layers.frame_stamp += 1;
         }
         let stamp = self.layers.frame_stamp;
-        let max_dim = device.limits().max_texture_dimension_2d.min(MAX_CACHE_DIM);
+        let limit = device.limits().max_texture_dimension_2d;
+        let max_dim = limit.min(MAX_CACHE_DIM);
         let bpp = u64::from(FORMAT.block_copy_size(None).unwrap());
         let mut active_cache_bytes = 0u64;
 
@@ -451,9 +452,18 @@ impl Renderer {
                     bounds = [v[0], v[1], (v[2] - v[0]).max(0.0), (v[3] - v[1]).max(0.0)];
                     l.rect = bounds;
                     (width, height) = (bounds[2] as u32, bounds[3] as u32);
-                    bucket = (width.div_ceil(64) * 64, height.div_ceil(64) * 64);
                 }
             }
+            // Past the device's largest texture (a full-window blur's support, or a window
+            // taller than the drawable it got), a layer keeps what the viewport shows of it, and
+            // as much of its support around that as fits (`fit_layer`).
+            if width > limit || height > limit {
+                let l = &mut self.layers.plan[index];
+                bounds = fit_layer(l.vis, viewport, limit);
+                l.rect = bounds;
+                (width, height) = (bounds[2] as u32, bounds[3] as u32);
+            }
+            bucket = ((width.div_ceil(64) * 64).min(limit), (height.div_ceil(64) * 64).min(limit));
             let l = &self.layers.plan[index];
             if cache_target.is_none() && l.opacity == 1.0 && l.blend == Blend::SourceOver && !additive_parent
                 && l.blur == 0.0 && l.fade[3] == 0 && l.clip == NO_CLIP && l.turn.is_none() && l.hole[3] == 0.0 {
@@ -770,4 +780,23 @@ impl Renderer {
         }
         self.draw_with_effects(pass, format, cursor..range.end, target, hook);
     }
+}
+
+/// A layer's bounds (x, y, width, height) when its support `vis` (x0, y0, x1, y1) is wider or
+/// taller than `limit`: on each axis that doesn't fit, what the viewport shows of it first,
+/// then as much of the support around that as fits, split evenly where both sides have it.
+fn fit_layer(vis: [f32; 4], viewport: (u32, u32), limit: u32) -> [f32; 4] {
+    let limit = limit as f32;
+    let axis = |lo: f32, hi: f32, shown: f32| {
+        if hi - lo <= limit { return (lo, hi - lo); }
+        let a = lo.max(0.0).min(hi);
+        let b = hi.min(shown).max(a);
+        let room = (limit - (b - a)).max(0.0);
+        let after = (hi - b).min(room - (a - lo).min(room / 2.0));
+        let before = (a - lo).min(room - after);
+        (a - before, (b + after - (a - before)).min(limit))
+    };
+    let (x, w) = axis(vis[0], vis[2], viewport.0 as f32);
+    let (y, h) = axis(vis[1], vis[3], viewport.1 as f32);
+    [x, y, w, h]
 }

@@ -8,12 +8,26 @@ use std::sync::{Arc, Mutex};
 
 pub const IMAGE_ATLAS_SIZE: u32 = 1024;
 
+/// The largest side an atlas places an image at, and before its GPU's limit is known: the
+/// decoders'.
+const MAX_SIDE: u32 = 8192;
+
+/// The smallest largest-texture side of any GPU a renderer was made for in this process
+/// (`u32::MAX` before any was): what an atlas no renderer told yet (`ImageAtlas::set_max_side`)
+/// places to, on any thread, so a host that draws a large image once draws it on that frame.
+static DEVICE_SIDE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+
+/// A renderer was made for a GPU whose largest texture side is `limit`.
+pub(crate) fn note_device_side(limit: u32) { DEVICE_SIDE.fetch_min(limit.max(1), Ordering::Relaxed); }
+
 struct Frame {
     width: u32,
     height: u32,
     rgba: Vec<u8>,
     generation: u64,
     mips: Option<Arc<crate::image::Decoded>>,
+    /// An atlas said it draws the image smaller than the GPU's largest texture.
+    told: bool,
 }
 
 /// A replaceable RGBA image, shared between the producer and the view. Clone it freely.
@@ -51,7 +65,7 @@ impl Pixels {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Pixels {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
-            frame: Arc::new(Mutex::new(Frame { width: 0, height: 0, rgba: Vec::new(), generation: 0, mips: None })),
+            frame: Arc::new(Mutex::new(Frame { width: 0, height: 0, rgba: Vec::new(), generation: 0, mips: None, told: false })),
             source: crate::live::Source::new(0),
             url: None,
             srcset: None,
@@ -246,6 +260,11 @@ pub struct ImageAtlas {
     /// Frames copied in so far, so the idle meter sees new pixels in a slot it already drew.
     #[cfg(debug_assertions)]
     pub(crate) copies: u64,
+    /// The GPU's largest texture side (`set_max_side`); 0 until its renderer says.
+    max_side: u32,
+    /// Frames copied in smaller than they'd draw because they're larger than the GPU's largest
+    /// texture.
+    pub(crate) too_large: u64,
 }
 
 impl ImageAtlas {
@@ -260,11 +279,13 @@ impl ImageAtlas {
     /// shows, or `None` for a still or an animation that has stopped. `None` for `now` shows
     /// an animation's first frame.
     pub(crate) fn place_at(&mut self, pixels: &Pixels, drawn: [f32; 2], now: Option<f64>) -> Option<(Placed, Option<f64>)> {
-        let frame = pixels.frame.lock().unwrap();
+        let mut frame = pixels.frame.lock().unwrap();
         let (mut w, mut h) = (frame.width, frame.height);
-        if w == 0 || h == 0 || w > 8192 || h > 8192 {
+        if w == 0 || h == 0 {
             return None;
         }
+        let max = self.max_side();
+        let mut limited = false;
         let mut level = 0;
         let mut shown = 0;
         let mut next = None;
@@ -285,10 +306,22 @@ impl ImageAtlas {
                     || (next.height as f32) < drawn[1].clamp(1.0, frame.height as f32) { break; }
                 level += 1;
             }
+            // The largest level the GPU takes, when the one that covers the drawn size is larger.
+            while level + 1 < mips.len() && mips[level].width.max(mips[level].height) > max {
+                level += 1;
+                limited = true;
+            }
             let mip = &mips[level];
             (w, h) = (mip.width, mip.height);
             &mip.pixels
         } else { &frame.rgba };
+        // Still larger than the GPU's textures: halved as its mips would be, in linear light,
+        // as it's copied in.
+        let source = (w, h);
+        let halvings = (0..32).find(|&n| (w >> n).max(h >> n) <= max).unwrap_or(31);
+        (w, h) = ((w >> halvings).max(1), (h >> halvings).max(1));
+        limited |= halvings > 0;
+        let premultiplied = frame.mips.is_some() || halvings > 0;
         let key = (pixels.id, level);
         if self.slots.get(&key).is_some_and(|s| s.w != w || s.h != h) {
             self.slots.remove(&key);
@@ -306,6 +339,11 @@ impl ImageAtlas {
             { self.copies += 1; }
             let page = &mut self.pages[slot.page];
             let row = (page.width * 4) as usize;
+            let halved;
+            let bytes = if halvings > 0 {
+                halved = crate::image::halved(source.0, source.1, bytes, halvings, frame.mips.is_some()).2;
+                &halved[..]
+            } else { bytes };
             for line in 0..h as usize {
                 let dst = (slot.y as usize + line) * row + slot.x as usize * 4;
                 let src = line * w as usize * 4;
@@ -313,9 +351,31 @@ impl ImageAtlas {
             }
             let (y0, y1) = (slot.y, slot.y + h);
             page.dirty = Some(page.dirty.map_or((y0, y1), |(a, b)| (a.min(y0), b.max(y1))));
+            if limited {
+                self.too_large += 1;
+                if !std::mem::replace(&mut frame.told, true) {
+                    eprintln!("rune: a {}x{} image is larger than the GPU's {max} px textures; drawing it at {w}x{h}", frame.width, frame.height);
+                }
+            }
         }
-        Some((Placed { rect: [slot.x, slot.y, w, h], page: slot.page, premultiplied: frame.mips.is_some() }, next))
+        Some((Placed { rect: [slot.x, slot.y, w, h], page: slot.page, premultiplied }, next))
     }
+
+    /// The largest side an image is placed at: the GPU's largest texture (`Limits::
+    /// max_texture_dimension_2d`) as its renderer said, or else the smallest any renderer made
+    /// in this process knows (`note_device_side`), and at most the decoders' 8192.
+    fn max_side(&self) -> u32 {
+        let told = if self.max_side != 0 { self.max_side } else { DEVICE_SIDE.load(Ordering::Relaxed) };
+        told.min(MAX_SIDE)
+    }
+
+    /// Places images no larger than `limit` pixels a side, the GPU's largest texture: a larger
+    /// one draws its largest mip that fits, or halved as its mips would be as it's copied in,
+    /// and says so once. Rune's hosts say before the first frame (`window::rebuild_renderer`),
+    /// and every upload does. Only an atlas that placed an image before this process made any
+    /// renderer can hold a page larger than its GPU's: that page gets no texture, and the image
+    /// draws when its host draws again.
+    pub fn set_max_side(&mut self, limit: u32) { self.max_side = limit.max(1); }
 
     /// Forgets images no element showed since the last call, except on pages that still show
     /// one and on the first page: shelves never reuse a slot's space until their page starts
@@ -396,6 +456,10 @@ impl ImagePage {
         Some(at)
     }
 }
+
+#[cfg(test)]
+#[path = "pixels_tests.rs"]
+mod limit_tests;
 
 #[cfg(test)]
 mod tests {

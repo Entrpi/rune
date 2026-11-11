@@ -143,7 +143,10 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     let mut renderer = Renderer::new(&gpu.device, target_format);
     renderer.set_srgb_blend(srgb_blend);
     renderer.attach_text(&mut rt.text.atlas);
+    rt.images.set_max_side(gpu.device.limits().max_texture_dimension_2d);
     let (wp, hp) = ((size.0 * scale).round() as u32, (size.1 * scale).round() as u32);
+    let max = gpu.device.limits().max_texture_dimension_2d;
+    if wp > max || hp > max { die(&format!("the canvas, {wp}x{hp} pixels, is larger than the GPU's {max} px textures")); }
     let mut target = Offscreen::with_format(&gpu.device, wp, hp, target_format);
     let mut readback = crate::tooling::record::Readback::new(&gpu.device, &target, crate::tooling::record::DEPTH);
     let mut alpha = transparent.then(|| crate::render::surface_alpha::AlphaSurface::new(&gpu.device, target_format, (wp, hp)));

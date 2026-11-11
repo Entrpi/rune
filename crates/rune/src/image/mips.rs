@@ -8,6 +8,29 @@ pub(super) fn mip_chain(width: u32, height: u32, bytes: &[u8]) -> Result<Decoded
     Ok(steps.finish())
 }
 
+/// `w`×`h` RGBA8 `src` halved `halvings` times as `mip_chain` halves it, in linear light: the
+/// size of the level that leaves, and its pixels, premultiplied as a mip's are. `src` is
+/// straight alpha unless `premultiplied`.
+pub(crate) fn halved(mut w: u32, mut h: u32, src: &[u8], halvings: u32, premultiplied: bool) -> (u32, u32, Vec<u8>) {
+    let srgb = &*SRGB;
+    let mut level = std::borrow::Cow::Borrowed(src);
+    for i in 0..halvings {
+        let mut next = Vec::with_capacity((w / 2).max(1) as usize * (h / 2).max(1) as usize * 4);
+        if i == 0 && !premultiplied {
+            downsample_rows(w, h, &level, 0..(h / 2).max(1), &mut next, |p| {
+                let a = p[3] as f32 / 255.0;
+                [srgb.decode[p[0] as usize] * a, srgb.decode[p[1] as usize] * a, srgb.decode[p[2] as usize] * a, a]
+            });
+        } else {
+            downsample_rows(w, h, &level, 0..(h / 2).max(1), &mut next, |p| {
+                [srgb.decode[p[0] as usize], srgb.decode[p[1] as usize], srgb.decode[p[2] as usize], p[3] as f32 / 255.0]
+            });
+        }
+        (w, h, level) = ((w / 2).max(1), (h / 2).max(1), std::borrow::Cow::Owned(next));
+    }
+    (w, h, level.into_owned())
+}
+
 /// A mip chain under construction: mip 0 at once, then the smaller levels a slice of rows
 /// at a time.
 pub(super) struct MipSteps<'a> {

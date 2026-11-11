@@ -711,6 +711,7 @@ pub(crate) fn rebuild_renderer<S: 'static>(device: &wgpu::Device, renderer: &mut
     renderer.set_srgb_blend(rt.srgb_blend());
     // Before the first frame, so its glyph masks go to the GPU fill when the renderer has one.
     renderer.attach_text(&mut rt.text.atlas);
+    rt.images.set_max_side(device.limits().max_texture_dimension_2d);
 }
 
 pub(crate) fn is_wayland(event_loop: &ActiveEventLoop) -> bool {

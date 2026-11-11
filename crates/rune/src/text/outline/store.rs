@@ -66,11 +66,13 @@ pub(crate) struct OutlineStore {
     /// A record didn't fit: start again at the next frame.
     full: bool,
     support: Support,
+    /// Rows it may fill: `MAX_ROWS`, or fewer when the GPU's textures are shorter.
+    max_rows: u32,
 }
 
 impl Default for OutlineStore {
     fn default() -> Self {
-        OutlineStore { texels: vec![[0; 4]; WIDTH as usize], used: 1, glyphs: Default::default(), hints: Default::default(), dirty: None, full: false, support: Support::Untried }
+        OutlineStore { texels: vec![[0; 4]; WIDTH as usize], used: 1, glyphs: Default::default(), hints: Default::default(), dirty: None, full: false, support: Support::Untried, max_rows: MAX_ROWS }
     }
 }
 
@@ -106,7 +108,7 @@ impl OutlineStore {
     fn push(&mut self, texels: &[[u32; 4]], relative: bool) -> Option<u32> {
         let at = self.used;
         let end = at + texels.len();
-        if end > (MAX_ROWS * WIDTH) as usize {
+        if end > (self.max_rows * WIDTH) as usize {
             self.full = true;
             return None;
         }
@@ -135,6 +137,7 @@ impl OutlineStore {
         }
         self.full = false;
         self.used = 1;
+        self.texels.truncate((self.max_rows * WIDTH) as usize);
         self.glyphs.clear();
         self.hints.clear();
         true
@@ -158,9 +161,18 @@ impl OutlineStore {
     /// Rows the texture needs.
     pub(crate) fn rows(&self) -> u32 { (self.texels.len() / WIDTH as usize) as u32 }
 
-    /// The changed rows and their texels, as bytes, since the last call.
+    /// Holds the store to `rows` rows, the most its GPU's textures have. Records it already
+    /// holds past them are never uploaded, and it starts again at the next frame.
+    pub(crate) fn set_max_rows(&mut self, rows: u32) {
+        self.max_rows = rows.clamp(1, MAX_ROWS);
+        if self.rows() > self.max_rows { self.full = true; }
+    }
+
+    /// The changed rows within `max_rows` and their texels, as bytes, since the last call.
     pub(crate) fn take_dirty(&mut self) -> Option<(u32, &[u8])> {
         let (y0, y1) = self.dirty.take()?;
+        let y1 = y1.min(self.max_rows);
+        if y0 >= y1 { return None; }
         let rows = &self.texels[(y0 * WIDTH) as usize..(y1 * WIDTH) as usize];
         Some((y0, bytemuck::cast_slice(rows)))
     }
@@ -170,3 +182,7 @@ impl OutlineStore {
         self.dirty = Some((0, self.rows()));
     }
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

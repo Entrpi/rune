@@ -114,6 +114,7 @@ impl<S: 'static> LayerHost<S> {
         let mut rt = runtime_for(spec, state, (w, h), Env::new(dark, scale), wake);
         rt.set_srgb_blend(true);
         rt.set_os_drag(false);
+        rt.images.set_max_side(max_dim);
         let now = Instant::now();
         rt.wall_start = Some(now);
         rt.record_events = false;
